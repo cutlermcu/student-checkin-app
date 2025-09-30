@@ -1,0 +1,32 @@
+{
+	"name": "student-checkin-app",
+	"version": "0.0.0",
+	"private": true,
+	"main": "src/entry.py",
+	"compatibility_flags": [
+		"python_workers"
+	],
+	"compatibility_date": "2024-03-20",
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "student-checkin-db",
+			"database_id": "6a0ff4ad-0abf-45a7-8d70-089149e3d89c"
+		}
+	],
+	"vars": {
+		"APP_NAME": "Student Check-in System"
+	},
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"start": "wrangler dev"
+	},
+	"devDependencies": {
+		"wrangler": "^4.40.2"
+	},
+	"dependencies": {
+		"-": "^0.0.1",
+		"g": "^2.0.1"
+	}
+}

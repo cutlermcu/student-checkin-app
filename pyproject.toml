@@ -1,0 +1,12 @@
+[project]
+name = "student-checkin-app"
+version = "0.1.0"
+description = "Student check-in system with barcode scanning"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "cryptography"
+]
+
+[dependency-groups]
+dev = ["workers-py"]
