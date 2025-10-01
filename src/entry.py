@@ -162,13 +162,9 @@ class DatabaseManager:
         result = await self.execute_query(sql, [student_number])
         
         if result.get("success") and result.get("results"):
-            student = result["results"][0]
-            if decrypt_name and student.get("encrypted_name"):
-                # Add formatted display name for privacy
-                full_name = self.encryption.decrypt_name(student["encrypted_name"])
-                student["display_name"] = self.encryption.format_display_name(full_name)
-            return student
-        return None
+            students = result["results"][0]
+        return self.format_names_in_results(students)
+    
     
     async def get_all_students(self, decrypt_names: bool = True) -> List[Dict]:
         """Get all students"""
@@ -177,6 +173,7 @@ class DatabaseManager:
         
         if result.get("success"):
             students = result.get("results", [])
+            return self.format_names_in_results(students) 
             if decrypt_names:
                 for student in students:
                     if student.get("encrypted_name"):
@@ -190,7 +187,7 @@ class DatabaseManager:
         # For encrypted names, we need to get all students and search in memory
         all_students = await self.get_all_students(decrypt_names=True)
         
-        matching_students = []
+        students = []
         search_lower = search_term.lower()
         
         for student in all_students:
@@ -209,6 +206,38 @@ class DatabaseManager:
         
         return matching_students
     
+    def format_names_in_results(self, results):
+        """Format all encrypted_name fields in results to 'First L.' format"""
+        if not results:
+            return results
+        
+        # Handle single result (dict)
+        if isinstance(results, dict):
+            if 'encrypted_name' in results and results['encrypted_name']:
+                full_name = results['encrypted_name']
+                if " " in full_name:
+                    parts = full_name.split()
+                    if len(parts) >= 2:
+                        first_name = parts[0]
+                        last_initial = parts[-1][0].upper()
+                        results['encrypted_name'] = f"{first_name} {last_initial}."
+            return results
+        
+        # Handle list of results
+        if isinstance(results, list):
+            for result in results:
+                if isinstance(result, dict) and 'encrypted_name' in result and result['encrypted_name']:
+                    full_name = result['encrypted_name']
+                    if " " in full_name:
+                        parts = full_name.split()
+                        if len(parts) >= 2:
+                            first_name = parts[0]
+                            last_initial = parts[-1][0].upper()
+                            result['encrypted_name'] = f"{first_name} {last_initial}."
+        
+        return results
+
+
     # Space operations (unchanged)
     async def get_all_spaces(self) -> List[Dict]:
         """Get all available spaces"""
@@ -337,6 +366,7 @@ class DatabaseManager:
         
         if result.get("success"):
             checkins = result.get("results", [])
+            return self.format_names_in_results(checkins)  # ADD THIS LINE
             # Decrypt names for display
             for checkin in checkins:
                 if checkin.get("encrypted_name"):
@@ -425,7 +455,61 @@ class Default(WorkerEntrypoint):
             
             elif path == 'current-checkins' and request.method == 'GET':
                 return await self.current_checkins(db, request)
-            
+
+            elif path == 'debug-checkin' and request.method == 'GET':
+                print("=== DEBUG CHECKIN ENDPOINT ===")
+                try:
+                    # Test student lookup
+                    student = await db.get_student_by_number("100001")
+                    print(f"Student found: {student}")
+                    
+                    # Test space lookup
+                    space = await db.get_space_by_id(1)
+                    print(f"Space found: {space}")
+                    
+                    # Test if student exists
+                    if not student:
+                        return Response(
+                            json.dumps({
+                                "debug": "Student 100001 not found",
+                                "all_students": await db.get_all_students()
+                            }),
+                            headers={"Content-Type": "application/json"}
+                        )
+                    
+                    # Test if space exists
+                    if not space:
+                        return Response(
+                            json.dumps({
+                                "debug": "Space 1 not found",
+                                "all_spaces": await db.get_all_spaces()
+                            }),
+                            headers={"Content-Type": "application/json"}
+                        )
+                    
+                    return Response(
+                        json.dumps({
+                            "debug": "All good",
+                            "student": student,
+                            "space": space,
+                            "student_id": student.get("student_id"),
+                            "space_id": space.get("space_id")
+                        }),
+                        headers={"Content-Type": "application/json"}
+                    )
+                    
+                except Exception as e:
+                    print(f"Debug error: {e}")
+                    import traceback
+                    print(f"Traceback: {traceback.format_exc()}")
+                    return Response(
+                        json.dumps({
+                            "debug_error": str(e),
+                            "error_type": type(e).__name__
+                        }),
+                        headers={"Content-Type": "application/json"}
+                    )   
+                        
             else:
                 # Default response
                 return Response(
