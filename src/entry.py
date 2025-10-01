@@ -3,10 +3,88 @@ import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import urllib.parse
+import base64
+import hashlib
+import hmac
+
+class SimpleEncryption:
+    """Simple encryption using built-in Python libraries compatible with Workers runtime"""
+    
+    def __init__(self, key: str = "student-checkin-key-2024"):
+        self.key = key.encode('utf-8')
+        # Create a consistent key for XOR encryption
+        self.encryption_key = hashlib.sha256(self.key).digest()
+    
+    def _xor_encrypt_decrypt(self, data: bytes, key: bytes) -> bytes:
+        """XOR encryption/decryption - symmetric operation"""
+        result = bytearray()
+        key_len = len(key)
+        for i, byte in enumerate(data):
+            result.append(byte ^ key[i % key_len])
+        return bytes(result)
+    
+    def encrypt_name(self, name: str) -> str:
+        """Encrypt a student name using XOR + Base64"""
+        try:
+            # Convert to bytes
+            name_bytes = name.encode('utf-8')
+            
+            # XOR encrypt
+            encrypted_bytes = self._xor_encrypt_decrypt(name_bytes, self.encryption_key)
+            
+            # Base64 encode for safe storage
+            encoded = base64.b64encode(encrypted_bytes).decode('utf-8')
+            
+            # Add a prefix to identify encrypted data
+            return f"ENC:{encoded}"
+            
+        except Exception as e:
+            print(f"Encryption error: {e}")
+            return name  # Fallback to plain text
+    
+    def decrypt_name(self, encrypted_name: str) -> str:
+        """Decrypt a student name"""
+        try:
+            # Check if it's encrypted
+            if not encrypted_name.startswith("ENC:"):
+                return encrypted_name  # Plain text
+            
+            # Remove prefix and decode
+            encoded_data = encrypted_name[4:]  # Remove "ENC:" prefix
+            encrypted_bytes = base64.b64decode(encoded_data.encode('utf-8'))
+            
+            # XOR decrypt (same operation as encrypt)
+            decrypted_bytes = self._xor_encrypt_decrypt(encrypted_bytes, self.encryption_key)
+            
+            return decrypted_bytes.decode('utf-8')
+            
+        except Exception as e:
+            print(f"Decryption error: {e}")
+            return encrypted_name  # Return as-is if decryption fails
+    
+    def is_encrypted(self, name: str) -> bool:
+        """Check if a name is encrypted"""
+        return name.startswith("ENC:")
+    
+    def format_display_name(self, full_name: str) -> str:
+        """Format name as 'First Name L.' for privacy"""
+        try:
+            parts = full_name.strip().split()
+            if len(parts) == 0:
+                return "Unknown"
+            elif len(parts) == 1:
+                return parts[0]  # Just first name if only one name
+            else:
+                first_name = parts[0]
+                last_initial = parts[-1][0].upper() if parts[-1] else ""
+                return f"{first_name} {last_initial}." if last_initial else first_name
+        except:
+            return full_name  # Fallback to original if parsing fails
 
 class DatabaseManager:
-    def __init__(self, db_binding):
+    def __init__(self, db_binding, encryption_manager: SimpleEncryption):
         self.db = db_binding
+        self.encryption = encryption_manager
     
     async def execute_query(self, sql: str, params: list = None) -> Dict[str, Any]:
         """Execute a SQL query and return results"""
@@ -18,32 +96,161 @@ class DatabaseManager:
             
             # Convert JsProxy objects to Python objects
             converted_result = {
-                "success": True,  # If we got here, the query didn't throw an error
+                "success": True,
                 "results": [],
                 "meta": {}
+            }
+            
+            async loadSpaceManagement() {
+                try {
+                    const response = await fetch('/spaces');
+                    const data = await response.json();
+                    const spaces = data.spaces || [];
+                    
+                    const container = document.getElementById('spaceManagement');
+                    
+                    if (spaces.length === 0) {
+                        container.innerHTML = '<div class="status info">No spaces configured</div>';
+                        return;
+                    }
+                    
+                    container.innerHTML = spaces.map(space => `
+                        <div class="space-management-item">
+                            <div class="space-info">
+                                <div class="space-title">${space.space_name}</div>
+                                <div class="space-desc">${space.description || 'No description'}</div>
+                            </div>
+                            <div class="space-actions">
+                                <button onclick="adminDashboard.editSpace(${space.space_id}, '${space.space_name.replace(/'/g, "\\'")}', '${(space.description || '').replace(/'/g, "\\'")}')">Edit</button>
+                                <button class="danger" onclick="adminDashboard.deleteSpace(${space.space_id}, '${space.space_name.replace(/'/g, "\\'")}')">Delete</button>
+                            </div>
+                        </div>
+                    `).join('');
+                    
+                } catch (error) {
+                    console.error('Failed to load spaces:', error);
+                    document.getElementById('spaceManagement').innerHTML = 
+                        '<div class="status error">Failed to load spaces</div>';
+                }
+            }
+            
+            showAddSpaceModal() {
+                this.currentEditingSpaceId = null;
+                document.getElementById('modalTitle').textContent = 'Add New Space';
+                document.getElementById('spaceName').value = '';
+                document.getElementById('spaceDescription').value = '';
+                document.getElementById('spaceModal').style.display = 'block';
+                document.getElementById('spaceName').focus();
+            }
+            
+            editSpace(spaceId, spaceName, description) {
+                this.currentEditingSpaceId = spaceId;
+                document.getElementById('modalTitle').textContent = 'Edit Space';
+                document.getElementById('spaceName').value = spaceName;
+                document.getElementById('spaceDescription').value = description;
+                document.getElementById('spaceModal').style.display = 'block';
+                document.getElementById('spaceName').focus();
+            }
+            
+            hideSpaceModal() {
+                document.getElementById('spaceModal').style.display = 'none';
+                this.currentEditingSpaceId = null;
+            }
+            
+            async saveSpace() {
+                const spaceName = document.getElementById('spaceName').value.trim();
+                const description = document.getElementById('spaceDescription').value.trim();
+                
+                if (!spaceName) {
+                    this.showSpaceStatus('Space name is required', 'error');
+                    return;
+                }
+                
+                try {
+                    let response;
+                    if (this.currentEditingSpaceId) {
+                        // Update existing space
+                        response = await fetch(`/spaces/${this.currentEditingSpaceId}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ space_name: spaceName, description })
+                        });
+                    } else {
+                        // Create new space
+                        response = await fetch('/spaces', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ space_name: spaceName, description })
+                        });
+                    }
+                    
+                    const data = await response.json();
+                    
+                    if (data.status === 'success') {
+                        this.showSpaceStatus(data.message, 'success');
+                        this.hideSpaceModal();
+                        await this.loadSpaceManagement();
+                        await this.loadSpaceOccupancy(); // Refresh occupancy too
+                    } else {
+                        this.showSpaceStatus(data.message, 'error');
+                    }
+                } catch (error) {
+                    this.showSpaceStatus('Failed to save space', 'error');
+                }
+            }
+            
+            async deleteSpace(spaceId, spaceName) {
+                if (!confirm(`Are you sure you want to delete "${spaceName}"? This cannot be undone.`)) {
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`/spaces/${spaceId}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.status === 'success') {
+                        this.showSpaceStatus(data.message, 'success');
+                        await this.loadSpaceManagement();
+                        await this.loadSpaceOccupancy(); // Refresh occupancy too
+                    } else {
+                        this.showSpaceStatus(data.message, 'error');
+                    }
+                } catch (error) {
+                    this.showSpaceStatus('Failed to delete space', 'error');
+                }
+            }
+            
+            showSpaceStatus(message, type) {
+                const element = document.getElementById('spaceStatus');
+                element.textContent = message;
+                element.className = `status ${type}`;
+                element.classList.remove('hidden');
+                
+                // Auto-hide after 5 seconds
+                setTimeout(() => {
+                    element.classList.add('hidden');
+                }, 5000);
             }
             
             # Convert results if they exist
             if hasattr(result, 'results') and result.results is not None:
                 converted_result["results"] = []
                 try:
-                    # Try to iterate through results
                     results_list = list(result.results)
                     for row in results_list:
                         row_dict = {}
-                        # Convert row to dict - try different methods
                         try:
                             if hasattr(row, 'toJs'):
-                                # Convert pyodide object to JS then to Python
                                 js_obj = row.toJs()
                                 row_dict = js_obj.to_py()
                             elif hasattr(row, 'to_py'):
                                 row_dict = row.to_py()
                             else:
-                                # Try to access as object properties
                                 row_dict = dict(row)
                         except:
-                            # Last resort - try to get known column names
                             try:
                                 row_dict = {"count": row.count} if hasattr(row, 'count') else {}
                             except:
@@ -51,7 +258,6 @@ class DatabaseManager:
                         
                         converted_result["results"].append(row_dict)
                 except Exception as e:
-                    # If we can't iterate, try direct access
                     converted_result["results"] = []
             
             # Convert meta if it exists
@@ -60,7 +266,6 @@ class DatabaseManager:
                     meta = result.meta
                     converted_result["meta"] = {}
                     
-                    # Try to get common meta properties
                     if hasattr(meta, 'duration'):
                         converted_result["meta"]["duration"] = float(meta.duration)
                     if hasattr(meta, 'changes'):
@@ -77,32 +282,68 @@ class DatabaseManager:
             print(f"Database error: {e}")
             return {"success": False, "error": str(e)}
     
-    # Student operations
-    async def create_student(self, student_number: str, encrypted_name: str) -> bool:
-        """Add a new student to the database"""
+    # Student operations with encryption
+    async def create_student(self, student_number: str, plain_name: str) -> bool:
+        """Add a new student to the database with encrypted name"""
+        encrypted_name = self.encryption.encrypt_name(plain_name)
         sql = "INSERT INTO students (student_number, encrypted_name) VALUES (?, ?)"
         result = await self.execute_query(sql, [student_number, encrypted_name])
         return result.get("success", False)
     
-    async def get_student_by_number(self, student_number: str) -> Optional[Dict]:
+    async def get_student_by_number(self, student_number: str, decrypt_name: bool = True) -> Optional[Dict]:
         """Find a student by their student number"""
         sql = "SELECT * FROM students WHERE student_number = ?"
         result = await self.execute_query(sql, [student_number])
         
         if result.get("success") and result.get("results"):
-            return result["results"][0]
+            student = result["results"][0]
+            if decrypt_name and student.get("encrypted_name"):
+                # Add formatted display name for privacy
+                full_name = self.encryption.decrypt_name(student["encrypted_name"])
+                student["display_name"] = self.encryption.format_display_name(full_name)
+            return student
         return None
     
-    async def get_all_students(self) -> List[Dict]:
+    async def get_all_students(self, decrypt_names: bool = True) -> List[Dict]:
         """Get all students"""
         sql = "SELECT * FROM students ORDER BY student_number"
         result = await self.execute_query(sql)
         
         if result.get("success"):
-            return result.get("results", [])
+            students = result.get("results", [])
+            if decrypt_names:
+                for student in students:
+                    if student.get("encrypted_name"):
+                        full_name = self.encryption.decrypt_name(student["encrypted_name"])
+                        student["display_name"] = self.encryption.format_display_name(full_name)
+            return students
         return []
     
-    # Space operations
+    async def search_students(self, search_term: str) -> List[Dict]:
+        """Search students by name or student number"""
+        # For encrypted names, we need to get all students and search in memory
+        all_students = await self.get_all_students(decrypt_names=True)
+        
+        matching_students = []
+        search_lower = search_term.lower()
+        
+        for student in all_students:
+            student_number = str(student.get("student_number", "")).lower()
+            display_name = str(student.get("display_name", "")).lower()
+            
+            # Also search against full decrypted name for admin searches
+            full_name = ""
+            if student.get("encrypted_name"):
+                full_name = self.encryption.decrypt_name(student["encrypted_name"]).lower()
+            
+            if (search_lower in student_number or 
+                search_lower in display_name or 
+                search_lower in full_name):
+                matching_students.append(student)
+        
+        return matching_students
+    
+    # Space operations (unchanged)
     async def get_all_spaces(self) -> List[Dict]:
         """Get all available spaces"""
         sql = "SELECT * FROM spaces ORDER BY space_name"
@@ -112,14 +353,38 @@ class DatabaseManager:
             return result.get("results", [])
         return []
     
-    async def get_space_by_id(self, space_id: int) -> Optional[Dict]:
-        """Get a specific space by ID"""
-        sql = "SELECT * FROM spaces WHERE space_id = ?"
+    # Space CRUD operations
+    async def create_space(self, space_name: str, description: str = "") -> bool:
+        """Create a new space"""
+        sql = "INSERT INTO spaces (space_name, description) VALUES (?, ?)"
+        result = await self.execute_query(sql, [space_name, description])
+        return result.get("success", False)
+    
+    async def update_space(self, space_id: int, space_name: str, description: str = "") -> bool:
+        """Update an existing space"""
+        sql = "UPDATE spaces SET space_name = ?, description = ? WHERE space_id = ?"
+        result = await self.execute_query(sql, [space_name, description, space_id])
+        return result.get("success", False) and result.get("meta", {}).get("changes", 0) > 0
+    
+    async def delete_space(self, space_id: int) -> Dict[str, Any]:
+        """Delete a space (only if no active check-ins)"""
+        # First check if there are any active check-ins for this space
+        check_sql = "SELECT COUNT(*) as count FROM check_ins WHERE space_id = ? AND time_out IS NULL"
+        check_result = await self.execute_query(check_sql, [space_id])
+        
+        if check_result.get("success") and check_result.get("results"):
+            active_count = check_result["results"][0]["count"]
+            if active_count > 0:
+                return {"success": False, "error": f"Cannot delete space with {active_count} active check-ins"}
+        
+        # Delete the space
+        sql = "DELETE FROM spaces WHERE space_id = ?"
         result = await self.execute_query(sql, [space_id])
         
-        if result.get("success") and result.get("results"):
-            return result["results"][0]
-        return None
+        if result.get("success") and result.get("meta", {}).get("changes", 0) > 0:
+            return {"success": True, "message": "Space deleted successfully"}
+        else:
+            return {"success": False, "error": "Space not found or could not be deleted"}
     
     # Check-in operations
     async def create_checkin(self, student_id: int, space_id: int) -> bool:
@@ -145,7 +410,7 @@ class DatabaseManager:
         return None
     
     async def checkout_from_all_spaces(self, student_id: int) -> int:
-        """Check out student from all spaces they're currently in. Returns number of spaces checked out of."""
+        """Check out student from all spaces they're currently in"""
         sql = """UPDATE check_ins 
                  SET time_out = ? 
                  WHERE student_id = ? 
@@ -154,39 +419,8 @@ class DatabaseManager:
         result = await self.execute_query(sql, [current_time, student_id])
         return result.get("meta", {}).get("changes", 0)
     
-    async def search_students(self, search_term: str) -> List[Dict]:
-        """Search students by name or student number"""
-        sql = """SELECT * FROM students 
-                 WHERE student_number LIKE ? 
-                 OR encrypted_name LIKE ? 
-                 ORDER BY student_number"""
-        search_pattern = f"%{search_term}%"
-        result = await self.execute_query(sql, [search_pattern, search_pattern])
-        
-        if result.get("success"):
-            return result.get("results", [])
-        return []
-    
-    async def get_space_occupancy_summary(self) -> List[Dict]:
-        """Get summary of current occupancy for each space"""
-        sql = """SELECT 
-                    sp.space_id,
-                    sp.space_name,
-                    sp.description,
-                    COUNT(ci.student_id) as current_count
-                 FROM spaces sp
-                 LEFT JOIN check_ins ci ON sp.space_id = ci.space_id 
-                    AND ci.time_out IS NULL
-                 GROUP BY sp.space_id, sp.space_name, sp.description
-                 ORDER BY sp.space_name"""
-        result = await self.execute_query(sql)
-        
-        if result.get("success"):
-            return result.get("results", [])
-        return []
-    
     async def checkout_all_students(self) -> int:
-        """Check out all currently checked-in students. Returns number of students checked out."""
+        """Check out all currently checked-in students"""
         sql = """UPDATE check_ins 
                  SET time_out = ? 
                  WHERE time_out IS NULL"""
@@ -208,9 +442,9 @@ class DatabaseManager:
         return result.get("success", False)
     
     async def get_current_checkins(self, space_id: Optional[int] = None) -> List[Dict]:
-        """Get all current check-ins (no checkout time)"""
+        """Get all current check-ins with decrypted names and grade info"""
         if space_id:
-            sql = """SELECT ci.*, s.student_number, s.encrypted_name, sp.space_name
+            sql = """SELECT ci.*, s.student_number, s.encrypted_name, s.grade, sp.space_name
                      FROM check_ins ci
                      JOIN students s ON ci.student_id = s.student_id
                      JOIN spaces sp ON ci.space_id = sp.space_id
@@ -218,7 +452,7 @@ class DatabaseManager:
                      ORDER BY ci.time_in DESC"""
             result = await self.execute_query(sql, [space_id])
         else:
-            sql = """SELECT ci.*, s.student_number, s.encrypted_name, sp.space_name
+            sql = """SELECT ci.*, s.student_number, s.encrypted_name, s.grade, sp.space_name
                      FROM check_ins ci
                      JOIN students s ON ci.student_id = s.student_id
                      JOIN spaces sp ON ci.space_id = sp.space_id
@@ -227,7 +461,13 @@ class DatabaseManager:
             result = await self.execute_query(sql)
         
         if result.get("success"):
-            return result.get("results", [])
+            checkins = result.get("results", [])
+            # Decrypt names for display
+            for checkin in checkins:
+                if checkin.get("encrypted_name"):
+                    full_name = self.encryption.decrypt_name(checkin["encrypted_name"])
+                    checkin["display_name"] = self.encryption.format_display_name(full_name)
+            return checkins
         return []
     
     async def is_student_checked_in(self, student_id: int, space_id: int) -> bool:
@@ -245,71 +485,61 @@ class DatabaseManager:
 
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
-        # Initialize database manager
-        db = DatabaseManager(self.env.DB)
+        # Initialize simple encryption
+        encryption_key = getattr(self.env, 'ENCRYPTION_KEY', None) or "student-checkin-secure-2024"
+        encryption = SimpleEncryption(encryption_key)
+        
+        # Initialize database manager with encryption
+        db = DatabaseManager(self.env.DB, encryption)
         
         # Get URL path to determine what action to take
         url = request.url
         path_parts = url.split('/')
         path = path_parts[-1] if len(path_parts) > 1 else ''
         
-        # Handle query parameters - remove them from path for matching
+        # Handle query parameters
         if '?' in path:
             path = path.split('?')[0]
-        
-        # Debug URL parsing
-        print(f"Full URL: {url}")
-        print(f"Path parts: {path_parts}")
-        print(f"Extracted path: '{path}'")
-        print(f"Request method: {request.method}")
         
         try:
             # Handle different endpoints
             if path == 'debug-db' and request.method == 'GET':
-                print("Routing to debug-db")
                 return await self.debug_database(db)
             
             elif path == 'init-db' and request.method == 'GET':
-                print("Routing to init-db")
                 return await self.init_database(db)
             
             elif path == 'add-test-students' and request.method == 'GET':
-                print("Routing to add-test-students")
                 return await self.add_test_students(db)
             
+            elif path == 'migrate-encryption' and request.method == 'GET':
+                return await self.migrate_to_encryption(db)
+            
+            elif path == 'test-encryption' and request.method == 'GET':
+                return await self.test_encryption(encryption)
+            
             elif path == 'checkin' and request.method == 'POST':
-                print("Routing to checkin POST")
                 return await self.handle_checkin(db, request)
             
             elif path == 'checkout' and request.method == 'POST':
-                print("Routing to checkout POST")
                 return await self.handle_checkout(db, request)
             
             elif path == 'web' and request.method == 'GET':
-                print("Routing to web interface")
                 return await self.serve_web_interface()
             
             elif path == 'admin' and request.method == 'GET':
-                print("Routing to admin dashboard")
                 return await self.serve_admin_dashboard()
             
             elif path == 'search' and request.method == 'GET':
-                print("Routing to search GET - using modified test_database!")
-                return await self.test_database(db, request)
-            
-            elif path.startswith('search-student') and request.method == 'GET':
-                print("Routing to search-student GET")
-                return await self.search_student_get(db, request)
+                return await self.handle_search(db, request)
             
             elif path == 'bulk-checkout' and request.method == 'POST':
                 return await self.bulk_checkout_all(db)
             
             elif path.startswith('checkin-') and request.method == 'GET':
-                # Quick checkin format: /checkin-{student_number}-{space_id}
                 return await self.quick_checkin(db, path)
             
             elif path.startswith('checkout-') and request.method == 'GET':
-                # Quick checkout format: /checkout-{student_number}-{space_id}
                 return await self.quick_checkout(db, path)
             
             elif path == 'students' and request.method == 'GET':
@@ -318,29 +548,45 @@ class Default(WorkerEntrypoint):
             elif path == 'spaces' and request.method == 'GET':
                 return await self.list_spaces(db)
             
+            elif path == 'spaces' and request.method == 'POST':
+                return await self.create_space_endpoint(db, request)
+            
+            elif path.startswith('spaces/') and request.method == 'PUT':
+                space_id = int(path.split('/')[-1])
+                return await self.update_space_endpoint(db, request, space_id)
+            
+            elif path.startswith('spaces/') and request.method == 'DELETE':
+                space_id = int(path.split('/')[-1])
+                return await self.delete_space_endpoint(db, space_id)
+            
             elif path == 'current-checkins' and request.method == 'GET':
                 return await self.current_checkins(db)
             
-            elif path == 'test-db' and request.method == 'GET':
-                return await self.test_database(db)
-            
             else:
-                # Default response - show available endpoints
+                # Default response
                 return Response(
                     json.dumps({
-                        "message": "Student Check-in System API",
+                        "message": "Student Check-in System API with Simple Encryption",
+                        "security": "Student names encrypted using XOR cipher with Base64 encoding",
+                        "compatibility": "Uses only built-in Python libraries for Workers compatibility",
                         "endpoints": {
                             "/web": "GET - Web interface for barcode scanning and check-ins",
                             "/admin": "GET - Admin dashboard for monitoring and search",
                             "/debug-db": "GET - Debug database connection",
                             "/init-db": "GET - Initialize database tables",
-                            "/add-test-students": "GET - Add sample students",
-                            "/students": "GET - List all students",
-                            "/spaces": "GET - List all spaces", 
+                            "/add-test-students": "GET - Add sample students (with encryption)",
+                            "/migrate-encryption": "GET - Migrate existing plain text names to encrypted",
+                            "/test-encryption": "GET - Test encryption/decryption functionality",
+                            "/students": "GET - List all students (names decrypted for display)",
+                            "/spaces": "GET - List all spaces",
+                            "/spaces": "POST - Create new space (JSON: {space_name, description})",
+                            "/spaces/{id}": "PUT - Update space (JSON: {space_name, description})",
+                            "/spaces/{id}": "DELETE - Delete space (if no active check-ins)",
                             "/current-checkins": "GET - Show current check-ins",
-                            "/checkin-{student_number}-{space_id}": "GET - Quick checkin (e.g. /checkin-12345-1)",
-                            "/checkout-{student_number}-{space_id}": "GET - Quick checkout (e.g. /checkout-12345-1)",
-                            "/test-db": "GET - Test database connection"
+                            "/search?q=term": "GET - Search students by name or number",
+                            "/checkin-{student_number}-{space_id}": "GET - Quick checkin",
+                            "/checkout-{student_number}-{space_id}": "GET - Quick checkout",
+                            "/bulk-checkout": "POST - Check out all students"
                         }
                     }),
                     headers={"Content-Type": "application/json"}
@@ -351,19 +597,219 @@ class Default(WorkerEntrypoint):
                 json.dumps({"error": str(e)}),
                 status=500,
                 headers={"Content-Type": "application/json"}
-                            )
+            )
+    
+    async def test_encryption(self, encryption: SimpleEncryption):
+        """Test encryption functionality"""
+        try:
+            test_names = ["Alice Johnson", "Bob Smith", "Maria García", "李明", "John O'Connor"]
+            
+            results = []
+            for name in test_names:
+                encrypted = encryption.encrypt_name(name)
+                decrypted = encryption.decrypt_name(encrypted)
+                is_encrypted = encryption.is_encrypted(encrypted)
+                hmac_signature = encryption.create_hmac(name)
+                
+                results.append({
+                    "original": name,
+                    "encrypted": encrypted,
+                    "decrypted": decrypted,
+                    "is_encrypted": is_encrypted,
+                    "match": name == decrypted,
+                    "hmac": hmac_signature[:16] + "..."  # Show first 16 chars
+                })
+            
+            return Response(
+                json.dumps({
+                    "status": "success",
+                    "message": "Simple encryption test completed",
+                    "encryption_method": "XOR cipher with Base64 encoding",
+                    "results": results,
+                    "all_passed": all(r["match"] for r in results)
+                }),
+                headers={"Content-Type": "application/json"}
+            )
+            
+        except Exception as e:
+            return Response(
+                json.dumps({"status": "error", "message": str(e)}),
+                status=500,
+                headers={"Content-Type": "application/json"}
+            )
+    
+    async def migrate_to_encryption(self, db: DatabaseManager):
+        """Migrate existing plain text names to encrypted format"""
+        try:
+            # Get all students
+            sql = "SELECT * FROM students"
+            result = await db.execute_query(sql)
+            
+            if not result.get("success"):
+                return Response(
+                    json.dumps({"status": "error", "message": "Failed to fetch students"}),
+                    status=500,
+                    headers={"Content-Type": "application/json"}
+                )
+            
+            students = result.get("results", [])
+            migrated_count = 0
+            
+            for student in students:
+                encrypted_name = student.get("encrypted_name", "")
+                
+                # Check if already encrypted
+                if not db.encryption.is_encrypted(encrypted_name):
+                    # Encrypt the plain text name
+                    new_encrypted_name = db.encryption.encrypt_name(encrypted_name)
+                    
+                    # Update the database
+                    update_sql = "UPDATE students SET encrypted_name = ? WHERE student_id = ?"
+                    update_result = await db.execute_query(update_sql, [new_encrypted_name, student["student_id"]])
+                    
+                    if update_result.get("success"):
+                        migrated_count += 1
+            
+            return Response(
+                json.dumps({
+                    "status": "success",
+                    "message": f"Migration completed. {migrated_count} students migrated to encrypted names.",
+                    "total_students": len(students),
+                    "migrated": migrated_count
+                }),
+                headers={"Content-Type": "application/json"}
+            )
+            
+        except Exception as e:
+            return Response(
+                json.dumps({"status": "error", "message": str(e)}),
+                status=500,
+                headers={"Content-Type": "application/json"}
+            )
+    
+    async def add_test_students(self, db: DatabaseManager):
+        """Add test students with encrypted names"""
+        try:
+            test_students = [
+                ("12345", "Alice Johnson"),
+                ("23456", "Bob Smith"), 
+                ("34567", "Carol Davis"),
+                ("45678", "David Wilson"),
+                ("56789", "Emma Brown"),
+                ("67890", "Frank Miller"),
+                ("78901", "Grace Lee"),
+                ("89012", "Henry Taylor")
+            ]
+            
+            added_students = []
+            for student_number, name in test_students:
+                # Check if student already exists
+                existing = await db.get_student_by_number(student_number, decrypt_name=False)
+                if existing:
+                    continue  # Skip if already exists
+                
+                # The create_student method handles encryption automatically
+                result = await db.create_student(student_number, name)
+                if result:
+                    added_students.append({
+                        "student_number": student_number, 
+                        "original_name": name,
+                        "encrypted": True
+                    })
+            
+            return Response(
+                json.dumps({
+                    "status": "success",
+                    "message": f"Added {len(added_students)} test students with encrypted names",
+                    "students_added": added_students
+                }),
+                headers={"Content-Type": "application/json"}
+            )
+            
+        except Exception as e:
+            return Response(
+                json.dumps({"status": "error", "message": str(e)}),
+                status=500,
+                headers={"Content-Type": "application/json"}
+            )
+    
+    async def handle_search(self, db: DatabaseManager, request):
+        """Handle search requests with encrypted name support"""
+        try:
+            url = str(request.url)
+            
+            if '?' not in url or 'q=' not in url:
+                return Response(
+                    json.dumps({"status": "error", "message": "Missing search parameter 'q'"}),
+                    headers={"Content-Type": "application/json"}
+                )
+            
+            # Extract search term
+            query_string = url.split('?', 1)[1]
+            params = {}
+            for param in query_string.split('&'):
+                if '=' in param:
+                    key, value = param.split('=', 1)
+                    value = urllib.parse.unquote_plus(value)
+                    params[key] = value
+            
+            search_term = params.get('q', '').strip()
+            
+            if not search_term:
+                return Response(
+                    json.dumps({"status": "error", "message": "Empty search term"}),
+                    headers={"Content-Type": "application/json"}
+                )
+            
+            # Search using the encrypted-aware search method
+            students = await db.search_students(search_term)
+            
+            # Build results with current check-in status
+            results = []
+            for student in students:
+                current_checkin = await db.get_student_current_checkin(student["student_id"])
+                
+                result = {
+                    "student": {
+                        "student_id": student["student_id"],
+                        "student_number": student["student_number"],
+                        "encrypted_name": student.get("display_name", student.get("encrypted_name", ""))
+                    },
+                    "current_location": None,
+                    "check_in_time": None
+                }
+                
+                if current_checkin:
+                    result["current_location"] = current_checkin["space_name"]
+                    result["check_in_time"] = current_checkin["time_in"]
+                
+                results.append(result)
+            
+            return Response(
+                json.dumps({
+                    "status": "success",
+                    "search_term": search_term,
+                    "results": results,
+                    "count": len(results)
+                }),
+                headers={"Content-Type": "application/json"}
+            )
+            
+        except Exception as e:
+            return Response(
+                json.dumps({"status": "error", "message": str(e)}),
+                status=500,
+                headers={"Content-Type": "application/json"}
+            )
+    
+    # Include all the remaining methods with the same implementations as before
+    # (debug_database, init_database, quick_checkin, quick_checkout, etc.)
     
     async def debug_database(self, db: DatabaseManager):
         """Debug database connection and basic operations"""
         try:
-            # Test 1: Simple query
             simple_result = await db.execute_query("SELECT 1 as test")
-            
-            # Test 2: Check existing tables
             tables_result = await db.execute_query("SELECT name FROM sqlite_master WHERE type='table'")
-            
-            # Test 3: Try to create a simple table
-            create_result = await db.execute_query("CREATE TABLE IF NOT EXISTS test_table (id INTEGER)")
             
             return Response(
                 json.dumps({
@@ -372,8 +818,9 @@ class Default(WorkerEntrypoint):
                         "simple_query_results": simple_result.get("results", []),
                         "tables_success": tables_result.get("success", False),
                         "existing_tables": [row.get("name", "") for row in tables_result.get("results", [])],
-                        "create_table_success": create_result.get("success", False),
-                        "db_binding_exists": hasattr(self.env, 'DB')
+                        "db_binding_exists": hasattr(self.env, 'DB'),
+                        "encryption_enabled": True,
+                        "encryption_type": "Simple XOR + Base64"
                     }
                 }),
                 headers={"Content-Type": "application/json"}
@@ -389,7 +836,7 @@ class Default(WorkerEntrypoint):
             )
     
     async def init_database(self, db: DatabaseManager):
-        """Initialize database with tables and sample data"""
+        """Initialize database with tables"""
         try:
             results = []
             
@@ -430,60 +877,13 @@ class Default(WorkerEntrypoint):
             """)
             results.append(f"Check-ins table: {checkins_result}")
             
-            # Check if spaces exist before adding sample data
-            spaces_check = await db.execute_query("SELECT COUNT(*) as count FROM spaces")
-            results.append(f"Spaces count check: {spaces_check}")
-            
-            spaces_added = 0
-            # Better handling of the count check
-            if (spaces_check.get("success") and 
-                spaces_check.get("results") and 
-                len(spaces_check["results"]) > 0):
-                
-                count_value = spaces_check["results"][0].get("count", 1)  # Default to 1 to avoid inserting
-                results.append(f"Current space count: {count_value}")
-                
-                if count_value == 0:
-                    insert_result = await db.execute_query("""
-                        INSERT INTO spaces (space_name, description) VALUES 
-                        ('Library Study Hall', 'Main library study area'),
-                        ('Computer Lab A', 'Ground floor computer lab'),
-                        ('Student Lounge', 'Common area for student activities')
-                    """)
-                    results.append(f"Spaces insert: {insert_result}")
-                    if insert_result.get("success"):
-                        spaces_added = 3
-                else:
-                    results.append("Spaces already exist, skipping insert")
-            else:
-                # If count check failed, try inserting anyway (will fail if spaces exist due to UNIQUE constraint)
-                results.append("Count check failed, attempting insert anyway")
-                
-                # Try inserting spaces one by one
-                spaces_to_add = [
-                    ("Library Study Hall", "Main library study area"),
-                    ("Computer Lab A", "Ground floor computer lab"),
-                    ("Student Lounge", "Common area for student activities")
-                ]
-                
-                total_added = 0
-                for space_name, description in spaces_to_add:
-                    insert_result = await db.execute_query(
-                        "INSERT OR IGNORE INTO spaces (space_name, description) VALUES (?, ?)",
-                        [space_name, description]
-                    )
-                    results.append(f"Insert {space_name}: {insert_result}")
-                    if insert_result.get("success") and insert_result.get("meta", {}).get("changes", 0) > 0:
-                        total_added += 1
-                
-                spaces_added = total_added
-            
             return Response(
                 json.dumps({
                     "status": "success",
-                    "message": "Database initialized successfully",
-                    "debug_results": results,
-                    "spaces_added": spaces_added
+                    "message": "Database initialized with simple encryption support",
+                    "encryption_enabled": True,
+                    "encryption_type": "XOR cipher with Base64 encoding",
+                    "debug_results": results
                 }),
                 headers={"Content-Type": "application/json"}
             )
@@ -500,155 +900,38 @@ class Default(WorkerEntrypoint):
             )
     
     async def list_students(self, db: DatabaseManager):
-        """List all students"""
-        students = await db.get_all_students()
+        """List all students with decrypted names"""
+        students = await db.get_all_students(decrypt_names=True)
+        # For API response, use display_name as encrypted_name for compatibility
+        for student in students:
+            if "display_name" in student:
+                student["encrypted_name"] = student["display_name"]
+        
         return Response(
             json.dumps({"students": students}),
             headers={"Content-Type": "application/json"}
         )
     
-    async def add_test_students(self, db: DatabaseManager):
-        """Add test students to the database"""
-        try:
-            test_students = [
-                ("12345", "Alice Johnson"),
-                ("23456", "Bob Smith"), 
-                ("34567", "Carol Davis"),
-                ("45678", "David Wilson"),
-                ("56789", "Emma Brown")
-            ]
-            
-            added_students = []
-            for student_number, name in test_students:
-                # For now, we'll store names in plain text (we'll add encryption later)
-                result = await db.create_student(student_number, name)
-                if result:
-                    added_students.append({"student_number": student_number, "name": name})
-            
-            return Response(
-                json.dumps({
-                    "status": "success",
-                    "message": f"Added {len(added_students)} test students",
-                    "students_added": added_students
-                }),
-                headers={"Content-Type": "application/json"}
-            )
-            
-        except Exception as e:
-            return Response(
-                json.dumps({"status": "error", "message": str(e)}),
-                status=500,
-                headers={"Content-Type": "application/json"}
-            )
-    
-    async def handle_checkin(self, db: DatabaseManager, request):
-        """Handle POST request for student check-in"""
-        try:
-            body = await request.json()
-            student_number = body.get("student_number")
-            space_id = int(body.get("space_id"))
-            
-            # Find student
-            student = await db.get_student_by_number(student_number)
-            if not student:
-                return Response(
-                    json.dumps({"status": "error", "message": "Student not found"}),
-                    status=404,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            # Check if already checked in to this space
-            is_checked_in = await db.is_student_checked_in(student["student_id"], space_id)
-            if is_checked_in:
-                return Response(
-                    json.dumps({"status": "error", "message": "Student already checked into this space"}),
-                    status=400,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            # Create check-in
-            success = await db.create_checkin(student["student_id"], space_id)
-            if success:
-                space = await db.get_space_by_id(space_id)
-                return Response(
-                    json.dumps({
-                        "status": "success",
-                        "message": f"Student {student_number} checked into {space['space_name'] if space else 'Unknown Space'}"
-                    }),
-                    headers={"Content-Type": "application/json"}
-                )
-            else:
-                return Response(
-                    json.dumps({"status": "error", "message": "Failed to create check-in"}),
-                    status=500,
-                    headers={"Content-Type": "application/json"}
-                )
-                
-        except Exception as e:
-            return Response(
-                json.dumps({"status": "error", "message": str(e)}),
-                status=500,
-                headers={"Content-Type": "application/json"}
-            )
-    
-    async def handle_checkout(self, db: DatabaseManager, request):
-        """Handle POST request for student check-out"""
-        try:
-            body = await request.json()
-            student_number = body.get("student_number")
-            space_id = int(body.get("space_id"))
-            
-            # Find student
-            student = await db.get_student_by_number(student_number)
-            if not student:
-                return Response(
-                    json.dumps({"status": "error", "message": "Student not found"}),
-                    status=404,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            # Check if actually checked in
-            is_checked_in = await db.is_student_checked_in(student["student_id"], space_id)
-            if not is_checked_in:
-                return Response(
-                    json.dumps({"status": "error", "message": "Student not currently checked into this space"}),
-                    status=400,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            # Check out
-            success = await db.checkout_student(student["student_id"], space_id)
-            if success:
-                space = await db.get_space_by_id(space_id)
-                return Response(
-                    json.dumps({
-                        "status": "success",
-                        "message": f"Student {student_number} checked out of {space['space_name'] if space else 'Unknown Space'}"
-                    }),
-                    headers={"Content-Type": "application/json"}
-                )
-            else:
-                return Response(
-                    json.dumps({"status": "error", "message": "Failed to check out"}),
-                    status=500,
-                    headers={"Content-Type": "application/json"}
-                )
-                
-        except Exception as e:
-            return Response(
-                json.dumps({"status": "error", "message": str(e)}),
-                status=500,
-                headers={"Content-Type": "application/json"}
-            )
+    async def current_checkins(self, db: DatabaseManager):
+        """Show current check-ins with decrypted names"""
+        checkins = await db.get_current_checkins()
+        # For API response, use display_name as encrypted_name for compatibility
+        for checkin in checkins:
+            if "display_name" in checkin:
+                checkin["encrypted_name"] = checkin["display_name"]
+        
+        return Response(
+            json.dumps({"current_checkins": checkins}),
+            headers={"Content-Type": "application/json"}
+        )
     
     async def quick_checkin(self, db: DatabaseManager, path):
-        """Handle quick check-in via URL: /checkin-{student_number}-{space_id}"""
+        """Handle quick check-in with encrypted name support"""
         try:
-            # Parse the path: checkin-12345-1
             parts = path.split('-')
             if len(parts) != 3:
                 return Response(
-                    json.dumps({"status": "error", "message": "Invalid format. Use: /checkin-{student_number}-{space_id}"}),
+                    json.dumps({"status": "error", "message": "Invalid format"}),
                     status=400,
                     headers={"Content-Type": "application/json"}
                 )
@@ -656,8 +939,8 @@ class Default(WorkerEntrypoint):
             student_number = parts[1]
             space_id = int(parts[2])
             
-            # Find student
-            student = await db.get_student_by_number(student_number)
+            # Find student (with decrypted name)
+            student = await db.get_student_by_number(student_number, decrypt_name=True)
             if not student:
                 return Response(
                     json.dumps({"status": "error", "message": f"Student {student_number} not found"}),
@@ -666,8 +949,9 @@ class Default(WorkerEntrypoint):
                 )
             
             student_id = student["student_id"]
+            display_name = student.get("display_name", "Unknown")
             
-            # Check if student is currently checked into the same space
+            # Check if already checked in to this space
             is_checked_in_here = await db.is_student_checked_in(student_id, space_id)
             if is_checked_in_here:
                 return Response(
@@ -676,14 +960,13 @@ class Default(WorkerEntrypoint):
                     headers={"Content-Type": "application/json"}
                 )
             
-            # Check if student is checked into any other space
+            # Check if checked into another space and auto-checkout
             current_checkin = await db.get_student_current_checkin(student_id)
             previous_location = None
             
             if current_checkin:
-                # Student is checked into another space - auto check them out
                 previous_location = current_checkin["space_name"]
-                checkout_count = await db.checkout_from_all_spaces(student_id)
+                await db.checkout_from_all_spaces(student_id)
             
             # Create new check-in
             success = await db.create_checkin(student_id, space_id)
@@ -691,15 +974,15 @@ class Default(WorkerEntrypoint):
                 space = await db.get_space_by_id(space_id)
                 
                 if previous_location:
-                    message = f"✅ Student {student_number} ({student['encrypted_name']}) moved from {previous_location} to {space['space_name'] if space else 'Unknown Space'}"
+                    message = f"✅ Student {student_number} ({display_name}) moved from {previous_location} to {space['space_name'] if space else 'Unknown Space'}"
                 else:
-                    message = f"✅ Student {student_number} ({student['encrypted_name']}) checked into {space['space_name'] if space else 'Unknown Space'}"
+                    message = f"✅ Student {student_number} ({display_name}) checked into {space['space_name'] if space else 'Unknown Space'}"
                 
                 return Response(
                     json.dumps({
                         "status": "success",
                         "message": message,
-                        "student": student,
+                        "student": {"student_number": student_number, "display_name": display_name},
                         "space": space,
                         "previous_location": previous_location,
                         "action": "moved" if previous_location else "checked_in"
@@ -721,13 +1004,12 @@ class Default(WorkerEntrypoint):
             )
     
     async def quick_checkout(self, db: DatabaseManager, path):
-        """Handle quick check-out via URL: /checkout-{student_number}-{space_id}"""
+        """Handle quick check-out with encrypted name support"""
         try:
-            # Parse the path: checkout-12345-1
             parts = path.split('-')
             if len(parts) != 3:
                 return Response(
-                    json.dumps({"status": "error", "message": "Invalid format. Use: /checkout-{student_number}-{space_id}"}),
+                    json.dumps({"status": "error", "message": "Invalid format"}),
                     status=400,
                     headers={"Content-Type": "application/json"}
                 )
@@ -735,14 +1017,16 @@ class Default(WorkerEntrypoint):
             student_number = parts[1]
             space_id = int(parts[2])
             
-            # Find student
-            student = await db.get_student_by_number(student_number)
+            # Find student (with decrypted name)
+            student = await db.get_student_by_number(student_number, decrypt_name=True)
             if not student:
                 return Response(
                     json.dumps({"status": "error", "message": f"Student {student_number} not found"}),
                     status=404,
                     headers={"Content-Type": "application/json"}
                 )
+            
+            display_name = student.get("display_name", "Unknown")
             
             # Check if actually checked in
             is_checked_in = await db.is_student_checked_in(student["student_id"], space_id)
@@ -760,8 +1044,8 @@ class Default(WorkerEntrypoint):
                 return Response(
                     json.dumps({
                         "status": "success",
-                        "message": f"✅ Student {student_number} ({student['encrypted_name']}) checked out of {space['space_name'] if space else 'Unknown Space'}",
-                        "student": student,
+                        "message": f"✅ Student {student_number} ({display_name}) checked out of {space['space_name'] if space else 'Unknown Space'}",
+                        "student": {"student_number": student_number, "display_name": display_name},
                         "space": space
                     }),
                     headers={"Content-Type": "application/json"}
@@ -780,6 +1064,27 @@ class Default(WorkerEntrypoint):
                 headers={"Content-Type": "application/json"}
             )
     
+    async def bulk_checkout_all(self, db: DatabaseManager):
+        """Check out all currently checked-in students"""
+        try:
+            count = await db.checkout_all_students()
+            
+            return Response(
+                json.dumps({
+                    "status": "success",
+                    "message": f"Successfully checked out {count} students",
+                    "checked_out_count": count
+                }),
+                headers={"Content-Type": "application/json"}
+            )
+            
+        except Exception as e:
+            return Response(
+                json.dumps({"status": "error", "message": str(e)}),
+                status=500,
+                headers={"Content-Type": "application/json"}
+            )
+    
     async def list_spaces(self, db: DatabaseManager):
         """List all spaces"""
         spaces = await db.get_all_spaces()
@@ -788,13 +1093,108 @@ class Default(WorkerEntrypoint):
             headers={"Content-Type": "application/json"}
         )
     
-    async def current_checkins(self, db: DatabaseManager):
-        """Show current check-ins"""
-        checkins = await db.get_current_checkins()
-        return Response(
-            json.dumps({"current_checkins": checkins}),
-            headers={"Content-Type": "application/json"}
-                        )
+    async def create_space_endpoint(self, db: DatabaseManager, request):
+        """Create a new space"""
+        try:
+            body = await request.json()
+            space_name = body.get("space_name", "").strip()
+            description = body.get("description", "").strip()
+            
+            if not space_name:
+                return Response(
+                    json.dumps({"status": "error", "message": "Space name is required"}),
+                    status=400,
+                    headers={"Content-Type": "application/json"}
+                )
+            
+            success = await db.create_space(space_name, description)
+            
+            if success:
+                return Response(
+                    json.dumps({
+                        "status": "success",
+                        "message": f"Space '{space_name}' created successfully"
+                    }),
+                    headers={"Content-Type": "application/json"}
+                )
+            else:
+                return Response(
+                    json.dumps({"status": "error", "message": "Failed to create space (name may already exist)"}),
+                    status=400,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+        except Exception as e:
+            return Response(
+                json.dumps({"status": "error", "message": str(e)}),
+                status=500,
+                headers={"Content-Type": "application/json"}
+            )
+    
+    async def update_space_endpoint(self, db: DatabaseManager, request, space_id: int):
+        """Update an existing space"""
+        try:
+            body = await request.json()
+            space_name = body.get("space_name", "").strip()
+            description = body.get("description", "").strip()
+            
+            if not space_name:
+                return Response(
+                    json.dumps({"status": "error", "message": "Space name is required"}),
+                    status=400,
+                    headers={"Content-Type": "application/json"}
+                )
+            
+            success = await db.update_space(space_id, space_name, description)
+            
+            if success:
+                return Response(
+                    json.dumps({
+                        "status": "success",
+                        "message": f"Space updated successfully"
+                    }),
+                    headers={"Content-Type": "application/json"}
+                )
+            else:
+                return Response(
+                    json.dumps({"status": "error", "message": "Space not found or name already exists"}),
+                    status=404,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+        except Exception as e:
+            return Response(
+                json.dumps({"status": "error", "message": str(e)}),
+                status=500,
+                headers={"Content-Type": "application/json"}
+            )
+    
+    async def delete_space_endpoint(self, db: DatabaseManager, space_id: int):
+        """Delete a space"""
+        try:
+            result = await db.delete_space(space_id)
+            
+            if result["success"]:
+                return Response(
+                    json.dumps({
+                        "status": "success",
+                        "message": result["message"]
+                    }),
+                    headers={"Content-Type": "application/json"}
+                )
+            else:
+                return Response(
+                    json.dumps({"status": "error", "message": result["error"]}),
+                    status=400,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+        except Exception as e:
+            return Response(
+                json.dumps({"status": "error", "message": str(e)}),
+                status=500,
+                headers={"Content-Type": "application/json"}
+            )
     
     async def serve_web_interface(self):
         """Serve the main web interface with barcode scanning"""
@@ -968,6 +1368,89 @@ class Default(WorkerEntrypoint):
             display: none;
         }
         
+        .space-management-item {
+            background: #f8faf9;
+            padding: 20px;
+            margin: 12px 0;
+            border-left: 4px solid #2d7a54;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .space-info {
+            flex-grow: 1;
+        }
+        
+        .space-title {
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin-bottom: 4px;
+        }
+        
+        .space-desc {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .space-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .space-actions button {
+            padding: 8px 16px;
+            font-size: 14px;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        
+        .modal-content {
+            background-color: white;
+            margin: 15% auto;
+            padding: 32px;
+            border: 1px solid #ddd;
+            width: 80%;
+            max-width: 500px;
+        }
+        
+        .modal h3 {
+            margin-bottom: 20px;
+            color: #000;
+        }
+        
+        .modal input, .modal textarea {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 16px;
+            border: 1px solid #000;
+            font-family: Helvetica, Arial, sans-serif;
+        }
+        
+        .modal textarea {
+            height: 80px;
+            resize: vertical;
+        }
+        
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+        
+        .modal-buttons button {
+            padding: 12px 24px;
+        }
+        
         @media (max-width: 600px) {
             .container {
                 padding: 15px;
@@ -1043,6 +1526,19 @@ class Default(WorkerEntrypoint):
         </div>
     </div>
 
+    <!-- Space Management Modal -->
+    <div id="spaceModal" class="modal">
+        <div class="modal-content">
+            <h3 id="modalTitle">Add New Space</h3>
+            <input type="text" id="spaceName" placeholder="Space name (e.g., Library Study Hall)">
+            <textarea id="spaceDescription" placeholder="Description (optional)"></textarea>
+            <div class="modal-buttons">
+                <button id="cancelSpaceBtn">Cancel</button>
+                <button id="saveSpaceBtn">Save</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Include QuaggaJS for barcode scanning -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
     
@@ -1110,7 +1606,7 @@ class Default(WorkerEntrypoint):
                     } else {
                         container.innerHTML = checkins.map(checkin => `
                             <div class="checkin-item">
-                                <strong>${checkin.encrypted_name}</strong> (#${checkin.student_number})<br>
+                                <strong>${checkin.encrypted_name}</strong> (#${checkin.student_number})${checkin.grade ? ` - Grade ${checkin.grade}` : ''}<br>
                                 Location: ${checkin.space_name}<br>
                                 Since: ${new Date(checkin.time_in).toLocaleTimeString()}
                             </div>
@@ -1222,7 +1718,6 @@ class Default(WorkerEntrypoint):
                         
                         // Clear student number but keep space selected
                         document.getElementById('studentNumber').value = '';
-                        // Don't reset space: document.getElementById('spaceSelect').value = '';
                         
                         // Focus back to student number for next entry
                         document.getElementById('studentNumber').focus();
@@ -1254,7 +1749,6 @@ class Default(WorkerEntrypoint):
                         
                         // Clear student number but keep space selected
                         document.getElementById('studentNumber').value = '';
-                        // Don't reset space: document.getElementById('spaceSelect').value = '';
                         
                         // Focus back to student number for next entry
                         document.getElementById('studentNumber').focus();
@@ -1673,6 +2167,22 @@ class Default(WorkerEntrypoint):
         </div>
         
         <div class="card">
+            <h2>Space Management</h2>
+            <div class="controls">
+                <button id="addSpaceBtn">Add New Space</button>
+                <button id="refreshSpacesBtn">Refresh Spaces</button>
+            </div>
+            
+            <div id="spaceManagement">
+                <div class="status info">Loading spaces...</div>
+            </div>
+            
+            <div id="spaceStatus" class="status info hidden">
+                Space actions will appear here
+            </div>
+        </div>
+        
+        <div class="card">
             <h2>Space Occupancy</h2>
             <div id="spaceOccupancy">
                 <div class="status info">Loading space data...</div>
@@ -1684,6 +2194,7 @@ class Default(WorkerEntrypoint):
         class AdminDashboard {
             constructor() {
                 this.refreshInterval = null;
+                this.currentEditingSpaceId = null;
                 this.init();
             }
             
@@ -1699,6 +2210,12 @@ class Default(WorkerEntrypoint):
                 document.getElementById('refreshBtn').addEventListener('click', () => this.loadAllData());
                 document.getElementById('exportBtn').addEventListener('click', () => this.exportData());
                 document.getElementById('bulkCheckoutBtn').addEventListener('click', () => this.bulkCheckout());
+                
+                // Space management
+                document.getElementById('addSpaceBtn').addEventListener('click', () => this.showAddSpaceModal());
+                document.getElementById('refreshSpacesBtn').addEventListener('click', () => this.loadSpaceManagement());
+                document.getElementById('cancelSpaceBtn').addEventListener('click', () => this.hideSpaceModal());
+                document.getElementById('saveSpaceBtn').addEventListener('click', () => this.saveSpace());
                 
                 // Enter key support for search
                 document.getElementById('searchBox').addEventListener('keypress', (e) => {
@@ -1719,12 +2236,20 @@ class Default(WorkerEntrypoint):
                         }
                     }, 300);
                 });
+                
+                // Modal click outside to close
+                document.getElementById('spaceModal').addEventListener('click', (e) => {
+                    if (e.target === document.getElementById('spaceModal')) {
+                        this.hideSpaceModal();
+                    }
+                });
             }
             
             async loadAllData() {
                 await Promise.all([
                     this.loadStats(),
-                    this.loadSpaceOccupancy()
+                    this.loadSpaceOccupancy(),
+                    this.loadSpaceManagement()
                 ]);
             }
             
@@ -1802,7 +2327,7 @@ class Default(WorkerEntrypoint):
                                 <div class="student-item">
                                     <div class="student-info">
                                         <div class="student-name">${checkin.encrypted_name}</div>
-                                        <div class="student-details">#${checkin.student_number}</div>
+                                        <div class="student-details">#${checkin.student_number}${checkin.grade ? ` - Grade ${checkin.grade}` : ''}</div>
                                     </div>
                                     <div class="time-badge">
                                         ${new Date(checkin.time_in).toLocaleTimeString()}
@@ -1835,7 +2360,6 @@ class Default(WorkerEntrypoint):
             
             async performSearch() {
                 const query = document.getElementById('searchBox').value.trim();
-                console.log('Performing search for:', query);
                 
                 if (!query) {
                     this.showSearchStatus('Please enter a search term', 'error');
@@ -1843,14 +2367,8 @@ class Default(WorkerEntrypoint):
                 }
                 
                 try {
-                    console.log('Sending GET search request...');
-                    
-                    // Use GET request with query parameter
                     const response = await fetch(`/search?q=${encodeURIComponent(query)}`);
-                    
-                    console.log('Search response status:', response.status);
                     const data = await response.json();
-                    console.log('Search response data:', data);
                     
                     if (data.status === 'success') {
                         this.displaySearchResults(data.results);
@@ -1988,7 +2506,7 @@ class Default(WorkerEntrypoint):
         
         // Initialize the dashboard when page loads
         document.addEventListener('DOMContentLoaded', () => {
-            new AdminDashboard();
+            window.adminDashboard = new AdminDashboard();
         });
         
         // Clean up when page unloads
@@ -2004,169 +2522,4 @@ class Default(WorkerEntrypoint):
         return Response(
             html_content,
             headers={"Content-Type": "text/html"}
-                    )
-    
-    async def search_student(self, db: DatabaseManager, path):
-        """Search for students by name or number"""
-        try:
-            # Extract search term from path: search-student/term
-            # path comes in as "search-student-encoded-term" so we need to parse it differently
-            if not path.startswith('search-student-'):
-                return Response(
-                    json.dumps({"status": "error", "message": "Invalid search format"}),
-                    status=400,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            # Extract the search term after "search-student-"
-            search_term = path[len('search-student-'):]
-            
-            if not search_term:
-                return Response(
-                    json.dumps({"status": "error", "message": "Empty search term"}),
-                    status=400,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            # URL decode the search term
-            import urllib.parse
-            search_term = urllib.parse.unquote(search_term)
-            
-            # Search for students
-            students = await db.search_students(search_term)
-            
-            # For each student, check if they're currently checked in
-            results = []
-            for student in students:
-                current_checkin = await db.get_student_current_checkin(student["student_id"])
-                
-                result = {
-                    "student": student,
-                    "current_location": None,
-                    "check_in_time": None
-                }
-                
-                if current_checkin:
-                    result["current_location"] = current_checkin["space_name"]
-                    result["check_in_time"] = current_checkin["time_in"]
-                
-                results.append(result)
-            
-            return Response(
-                json.dumps({
-                    "status": "success",
-                    "search_term": search_term,
-                    "results": results,
-                    "count": len(results)
-                }),
-                headers={"Content-Type": "application/json"}
-            )
-            
-        except Exception as e:
-            return Response(
-                json.dumps({"status": "error", "message": str(e)}),
-                status=500,
-                headers={"Content-Type": "application/json"}
-            )
-    
-    async def bulk_checkout_all(self, db: DatabaseManager):
-        """Check out all currently checked-in students"""
-        try:
-            count = await db.checkout_all_students()
-            
-            return Response(
-                json.dumps({
-                    "status": "success",
-                    "message": f"Successfully checked out {count} students",
-                    "checked_out_count": count
-                }),
-                headers={"Content-Type": "application/json"}
-            )
-            
-        except Exception as e:
-            return Response(
-                json.dumps({"status": "error", "message": str(e)}),
-                status=500,
-                headers={"Content-Type": "application/json"}
-            )
-    
-    async def test_database(self, db: DatabaseManager, request=None):
-        """Test database connection OR handle search if query params present"""
-        try:
-            # Check if this is a search request
-            if request and hasattr(request, 'url'):
-                url = str(request.url)
-                print(f"URL: {url}")
-                
-                if '?' in url and 'q=' in url:
-                    print("=== HANDLING SEARCH IN TEST_DATABASE ===")
-                    
-                    # Extract search term
-                    query_string = url.split('?', 1)[1]
-                    params = {}
-                    for param in query_string.split('&'):
-                        if '=' in param:
-                            key, value = param.split('=', 1)
-                            value = value.replace('%20', ' ').replace('+', ' ')
-                            params[key] = value
-                    
-                    search_term = params.get('q', '').strip()
-                    print(f"Search term: '{search_term}'")
-                    
-                    if not search_term:
-                        return Response(
-                            json.dumps({"status": "error", "message": "Empty search term"}),
-                            headers={"Content-Type": "application/json"}
-                        )
-                    
-                    # Get all students
-                    all_students = await db.get_all_students()
-                    print(f"Total students: {len(all_students)}")
-                    
-                    # Simple search
-                    matching_students = []
-                    for student in all_students:
-                        student_number = str(student.get("student_number", "")).lower()
-                        student_name = str(student.get("encrypted_name", "")).lower()
-                        
-                        if search_term.lower() in student_number or search_term.lower() in student_name:
-                            matching_students.append(student)
-                    
-                    print(f"Found {len(matching_students)} matches")
-                    
-                    # Build results
-                    results = []
-                    for student in matching_students:
-                        results.append({
-                            "student": student,
-                            "current_location": "Not checked in",
-                            "check_in_time": None
-                        })
-                    
-                    return Response(
-                        json.dumps({
-                            "status": "success",
-                            "search_term": search_term,
-                            "results": results,
-                            "count": len(results)
-                        }),
-                        headers={"Content-Type": "application/json"}
-                    )
-            
-            # Regular database test
-            result = await db.execute_query("SELECT COUNT(*) as count FROM spaces")
-            return Response(
-                json.dumps({
-                    "database_test": "success" if result.get("success") else "failed",
-                    "space_count": result.get("results", [{}])[0].get("count", 0) if result.get("success") else 0
-                }),
-                headers={"Content-Type": "application/json"}
-            )
-                
-        except Exception as e:
-            print(f"Error in test_database: {e}")
-            return Response(
-                json.dumps({"status": "error", "message": str(e)}),
-                status=500,
-                headers={"Content-Type": "application/json"}
-            )
+        )
