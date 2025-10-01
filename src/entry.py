@@ -218,7 +218,16 @@ class DatabaseManager:
         if result.get("success"):
             return result.get("results", [])
         return []
-    
+
+    async def get_space_by_id(self, space_id: int) -> Optional[Dict]:
+        """Get a specific space by ID"""
+        sql = "SELECT * FROM spaces WHERE space_id = ?"
+        result = await self.execute_query(sql, [space_id])
+            
+        if result.get("success") and result.get("results"):
+            return result["results"][0]
+        return None
+            
     # Space CRUD operations
     async def create_space(self, space_name: str, description: str = "") -> bool:
         """Create a new space"""
@@ -1607,706 +1616,706 @@ document.getElementById('modeToggle').addEventListener('click', () => this.toggl
         )
 
     async def serve_admin_dashboard(self):
-    """Serve the admin dashboard for monitoring and search"""
-    html_content = """<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Dashboard - Student Check-in System</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: Helvetica, Arial, sans-serif;
-            background: #1a5f3f;
-            min-height: 100vh;
-            color: #000;
-            margin: 0;
-            padding: 0;
-        }
-        
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 40px 20px;
-        }
-        
-        .header {
-            text-align: center;
-            color: white;
-            margin-bottom: 40px;
-        }
-        
-        .header h1 {
-            font-size: 2.5rem;
-            font-weight: normal;
-            margin-bottom: 8px;
-            letter-spacing: 0;
-        }
-        
-        .header p {
-            font-size: 1.1rem;
-            font-weight: normal;
-        }
-        
-        .nav-links {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        
-        .nav-links a {
-            color: white;
-            text-decoration: none;
-            margin: 0 20px;
-            padding: 12px 24px;
-            border: 1px solid white;
-            display: inline-block;
-            font-weight: normal;
-            transition: all 0.3s ease;
-        }
-        
-        .nav-links a:hover {
-            background: white;
-            color: #1a5f3f;
-        }
-        
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
-            margin-bottom: 30px;
-        }
-        
-        .card {
-            background: white;
-            padding: 32px;
-            box-shadow: none;
-            border: 1px solid #ddd;
-        }
-        
-        .card h2 {
-            color: #000;
-            margin-bottom: 24px;
-            font-weight: bold;
-            font-size: 1.5rem;
-        }
-        
-        .search-section {
-            text-align: center;
-        }
-        
-        .search-box {
-            width: 100%;
-            max-width: 400px;
-            padding: 16px;
-            border: 1px solid #000;
-            font-size: 16px;
-            margin-bottom: 20px;
-            font-family: Helvetica, Arial, sans-serif;
-        }
-        
-        .search-box:focus {
-            outline: 2px solid #2d7a54;
-            outline-offset: 0;
-        }
-        
-        .search-results {
-            margin-top: 20px;
-        }
-        
-        .space-card {
-            background: #f8faf9;
-            padding: 20px;
-            margin-bottom: 20px;
-            border-left: 4px solid #2d7a54;
-        }
-        
-        .space-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 16px;
-        }
-        
-        .space-name {
-            font-weight: bold;
-            font-size: 1.25rem;
-            color: #000;
-        }
-        
-        .occupancy-badge {
-            background: #2d7a54;
-            color: white;
-            padding: 6px 16px;
-            font-size: 0.875rem;
-            font-weight: bold;
-        }
-        
-        .occupancy-badge.empty {
-            background: #999;
-        }
-        
-        .occupancy-badge.low {
-            background: #059669;
-        }
-        
-        .occupancy-badge.medium {
-            background: #d97706;
-        }
-        
-        .occupancy-badge.high {
-            background: #dc2626;
-        }
-        
-        .student-list {
-            margin-top: 16px;
-        }
-        
-        .student-item {
-            background: white;
-            padding: 16px;
-            margin: 8px 0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border: 1px solid #ddd;
-        }
-        
-        .student-info {
-            flex-grow: 1;
-        }
-        
-        .student-name {
-            font-weight: bold;
-            color: #000;
-            margin-bottom: 4px;
-        }
-        
-        .student-details {
-            font-size: 0.875rem;
-            color: #000;
-        }
-        
-        .time-badge {
-            background: #f3f4f6;
-            color: #000;
-            padding: 4px 12px;
-            font-size: 0.75rem;
-            font-weight: normal;
-        }
-        
-        .controls {
-            display: flex;
-            gap: 12px;
-            justify-content: center;
-            flex-wrap: wrap;
-            margin: 24px 0;
-        }
-        
-        button {
-            background: #2d7a54;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            cursor: pointer;
-            font-size: 16px;
-            font-weight: bold;
-            font-family: Helvetica, Arial, sans-serif;
-            transition: all 0.3s ease;
-        }
-        
-        button:hover {
-            background: #1a5f3f;
-        }
-        
-        button:disabled {
-            background: #999;
-            cursor: not-allowed;
-        }
-        
-        button.danger {
-            background: #dc2626;
-        }
-        
-        button.danger:hover {
-            background: #b91c1c;
-        }
-        
-        .status {
-            margin: 20px 0;
-            padding: 16px;
-            font-weight: bold;
-            text-align: center;
-            border: 1px solid #ddd;
-        }
-        
-        .status.success {
-            background: #d1fae5;
-            color: #000;
-            border: 1px solid #a7f3d0;
-        }
-        
-        .status.error {
-            background: #fee2e2;
-            color: #000;
-            border: 1px solid #fecaca;
-        }
-        
-        .status.info {
-            background: #e0f2fe;
-            color: #000;
-            border: 1px solid #bae6fd;
-        }
-        
-        .hidden {
-            display: none;
-        }
-        
-        .stats-summary {
-            background: #2d7a54;
-            color: white;
-            padding: 32px;
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        
-        .stats-summary h2 {
-            color: white;
-            margin-bottom: 20px;
-        }
-        
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 24px;
-            margin-top: 20px;
-        }
-        
-        .stat-item {
-            text-align: center;
-        }
-        
-        .stat-number {
-            font-size: 2.5rem;
-            font-weight: bold;
-            display: block;
-            margin-bottom: 4px;
-        }
-        
-        .stat-label {
-            font-size: 0.875rem;
-            font-weight: normal;
-        }
-        
-        @media (max-width: 768px) {
-            .dashboard-grid {
-                grid-template-columns: 1fr;
+        """Serve the admin dashboard for monitoring and search"""
+        html_content = """<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Admin Dashboard - Student Check-in System</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            
+            body {
+                font-family: Helvetica, Arial, sans-serif;
+                background: #1a5f3f;
+                min-height: 100vh;
+                color: #000;
+                margin: 0;
+                padding: 0;
             }
             
             .container {
-                padding: 15px;
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 40px 20px;
+            }
+            
+            .header {
+                text-align: center;
+                color: white;
+                margin-bottom: 40px;
+            }
+            
+            .header h1 {
+                font-size: 2.5rem;
+                font-weight: normal;
+                margin-bottom: 8px;
+                letter-spacing: 0;
+            }
+            
+            .header p {
+                font-size: 1.1rem;
+                font-weight: normal;
+            }
+            
+            .nav-links {
+                text-align: center;
+                margin-bottom: 30px;
+            }
+            
+            .nav-links a {
+                color: white;
+                text-decoration: none;
+                margin: 0 20px;
+                padding: 12px 24px;
+                border: 1px solid white;
+                display: inline-block;
+                font-weight: normal;
+                transition: all 0.3s ease;
+            }
+            
+            .nav-links a:hover {
+                background: white;
+                color: #1a5f3f;
+            }
+            
+            .dashboard-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 30px;
+                margin-bottom: 30px;
+            }
+            
+            .card {
+                background: white;
+                padding: 32px;
+                box-shadow: none;
+                border: 1px solid #ddd;
+            }
+            
+            .card h2 {
+                color: #000;
+                margin-bottom: 24px;
+                font-weight: bold;
+                font-size: 1.5rem;
+            }
+            
+            .search-section {
+                text-align: center;
+            }
+            
+            .search-box {
+                width: 100%;
+                max-width: 400px;
+                padding: 16px;
+                border: 1px solid #000;
+                font-size: 16px;
+                margin-bottom: 20px;
+                font-family: Helvetica, Arial, sans-serif;
+            }
+            
+            .search-box:focus {
+                outline: 2px solid #2d7a54;
+                outline-offset: 0;
+            }
+            
+            .search-results {
+                margin-top: 20px;
+            }
+            
+            .space-card {
+                background: #f8faf9;
+                padding: 20px;
+                margin-bottom: 20px;
+                border-left: 4px solid #2d7a54;
+            }
+            
+            .space-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 16px;
+            }
+            
+            .space-name {
+                font-weight: bold;
+                font-size: 1.25rem;
+                color: #000;
+            }
+            
+            .occupancy-badge {
+                background: #2d7a54;
+                color: white;
+                padding: 6px 16px;
+                font-size: 0.875rem;
+                font-weight: bold;
+            }
+            
+            .occupancy-badge.empty {
+                background: #999;
+            }
+            
+            .occupancy-badge.low {
+                background: #059669;
+            }
+            
+            .occupancy-badge.medium {
+                background: #d97706;
+            }
+            
+            .occupancy-badge.high {
+                background: #dc2626;
+            }
+            
+            .student-list {
+                margin-top: 16px;
+            }
+            
+            .student-item {
+                background: white;
+                padding: 16px;
+                margin: 8px 0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                border: 1px solid #ddd;
+            }
+            
+            .student-info {
+                flex-grow: 1;
+            }
+            
+            .student-name {
+                font-weight: bold;
+                color: #000;
+                margin-bottom: 4px;
+            }
+            
+            .student-details {
+                font-size: 0.875rem;
+                color: #000;
+            }
+            
+            .time-badge {
+                background: #f3f4f6;
+                color: #000;
+                padding: 4px 12px;
+                font-size: 0.75rem;
+                font-weight: normal;
             }
             
             .controls {
-                flex-direction: column;
-                align-items: center;
+                display: flex;
+                gap: 12px;
+                justify-content: center;
+                flex-wrap: wrap;
+                margin: 24px 0;
             }
             
             button {
-                width: 200px;
+                background: #2d7a54;
+                color: white;
+                border: none;
+                padding: 12px 24px;
+                cursor: pointer;
+                font-size: 16px;
+                font-weight: bold;
+                font-family: Helvetica, Arial, sans-serif;
+                transition: all 0.3s ease;
             }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>Admin Dashboard</h1>
-            <p>Monitor spaces and manage student check-ins</p>
-        </div>
-        
-        <div class="nav-links">
-            <a href="/web">Student Interface</a>
-            <a href="/admin">Admin Dashboard</a>
-            <a href="/">API Endpoints</a>
-        </div>
-        
-        <div class="stats-summary">
-            <h2>System Overview</h2>
-            <div class="stats-grid">
-                <div class="stat-item">
-                    <span id="totalStudents" class="stat-number">-</span>
-                    <span class="stat-label">Total Students</span>
-                </div>
-                <div class="stat-item">
-                    <span id="activeCheckins" class="stat-number">-</span>
-                    <span class="stat-label">Currently Checked In</span>
-                </div>
-                <div class="stat-item">
-                    <span id="totalSpaces" class="stat-number">-</span>
-                    <span class="stat-label">Available Spaces</span>
-                </div>
-                <div class="stat-item">
-                    <span id="occupiedSpaces" class="stat-number">-</span>
-                    <span class="stat-label">Occupied Spaces</span>
+            
+            button:hover {
+                background: #1a5f3f;
+            }
+            
+            button:disabled {
+                background: #999;
+                cursor: not-allowed;
+            }
+            
+            button.danger {
+                background: #dc2626;
+            }
+            
+            button.danger:hover {
+                background: #b91c1c;
+            }
+            
+            .status {
+                margin: 20px 0;
+                padding: 16px;
+                font-weight: bold;
+                text-align: center;
+                border: 1px solid #ddd;
+            }
+            
+            .status.success {
+                background: #d1fae5;
+                color: #000;
+                border: 1px solid #a7f3d0;
+            }
+            
+            .status.error {
+                background: #fee2e2;
+                color: #000;
+                border: 1px solid #fecaca;
+            }
+            
+            .status.info {
+                background: #e0f2fe;
+                color: #000;
+                border: 1px solid #bae6fd;
+            }
+            
+            .hidden {
+                display: none;
+            }
+            
+            .stats-summary {
+                background: #2d7a54;
+                color: white;
+                padding: 32px;
+                text-align: center;
+                margin-bottom: 30px;
+            }
+            
+            .stats-summary h2 {
+                color: white;
+                margin-bottom: 20px;
+            }
+            
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 24px;
+                margin-top: 20px;
+            }
+            
+            .stat-item {
+                text-align: center;
+            }
+            
+            .stat-number {
+                font-size: 2.5rem;
+                font-weight: bold;
+                display: block;
+                margin-bottom: 4px;
+            }
+            
+            .stat-label {
+                font-size: 0.875rem;
+                font-weight: normal;
+            }
+            
+            @media (max-width: 768px) {
+                .dashboard-grid {
+                    grid-template-columns: 1fr;
+                }
+                
+                .container {
+                    padding: 15px;
+                }
+                
+                .controls {
+                    flex-direction: column;
+                    align-items: center;
+                }
+                
+                button {
+                    width: 200px;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>Admin Dashboard</h1>
+                <p>Monitor spaces and manage student check-ins</p>
+            </div>
+            
+            <div class="nav-links">
+                <a href="/web">Student Interface</a>
+                <a href="/admin">Admin Dashboard</a>
+                <a href="/">API Endpoints</a>
+            </div>
+            
+            <div class="stats-summary">
+                <h2>System Overview</h2>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <span id="totalStudents" class="stat-number">-</span>
+                        <span class="stat-label">Total Students</span>
+                    </div>
+                    <div class="stat-item">
+                        <span id="activeCheckins" class="stat-number">-</span>
+                        <span class="stat-label">Currently Checked In</span>
+                    </div>
+                    <div class="stat-item">
+                        <span id="totalSpaces" class="stat-number">-</span>
+                        <span class="stat-label">Available Spaces</span>
+                    </div>
+                    <div class="stat-item">
+                        <span id="occupiedSpaces" class="stat-number">-</span>
+                        <span class="stat-label">Occupied Spaces</span>
+                    </div>
                 </div>
             </div>
-        </div>
-        
-        <div class="dashboard-grid">
-            <div class="card search-section">
-                <h2>Student Search</h2>
-                <input type="text" id="searchBox" class="search-box" placeholder="Search by name or student number...">
-                <button id="searchBtn">Search</button>
-                <button id="clearSearchBtn">Clear</button>
+            
+            <div class="dashboard-grid">
+                <div class="card search-section">
+                    <h2>Student Search</h2>
+                    <input type="text" id="searchBox" class="search-box" placeholder="Search by name or student number...">
+                    <button id="searchBtn">Search</button>
+                    <button id="clearSearchBtn">Clear</button>
+                    
+                    <div id="searchResults" class="search-results">
+                        <div class="status info">Enter a student name or number to search</div>
+                    </div>
+                </div>
                 
-                <div id="searchResults" class="search-results">
-                    <div class="status info">Enter a student name or number to search</div>
+                <div class="card">
+                    <h2>Admin Controls</h2>
+                    <div class="controls">
+                        <button id="refreshBtn">Refresh Data</button>
+                        <button id="exportBtn">Export CSV</button>
+                        <button id="bulkCheckoutBtn" class="danger">Check Out All</button>
+                    </div>
+                    
+                    <div id="adminStatus" class="status info hidden">
+                        Admin actions will appear here
+                    </div>
                 </div>
             </div>
             
             <div class="card">
-                <h2>Admin Controls</h2>
-                <div class="controls">
-                    <button id="refreshBtn">Refresh Data</button>
-                    <button id="exportBtn">Export CSV</button>
-                    <button id="bulkCheckoutBtn" class="danger">Check Out All</button>
-                </div>
-                
-                <div id="adminStatus" class="status info hidden">
-                    Admin actions will appear here
+                <h2>Space Occupancy</h2>
+                <div id="spaceOccupancy">
+                    <div class="status info">Loading space data...</div>
                 </div>
             </div>
         </div>
-        
-        <div class="card">
-            <h2>Space Occupancy</h2>
-            <div id="spaceOccupancy">
-                <div class="status info">Loading space data...</div>
-            </div>
-        </div>
-    </div>
 
-    <script>
-        class AdminDashboard {
-            constructor() {
-                this.refreshInterval = null;
-                this.init();
-            }
-            
-            async init() {
-                this.setupEventListeners();
-                await this.loadAllData();
-                this.startAutoRefresh();
-            }
-            
-            setupEventListeners() {
-                document.getElementById('searchBtn').addEventListener('click', () => this.performSearch());
-                document.getElementById('clearSearchBtn').addEventListener('click', () => this.clearSearch());
-                document.getElementById('refreshBtn').addEventListener('click', () => this.loadAllData());
-                document.getElementById('exportBtn').addEventListener('click', () => this.exportData());
-                document.getElementById('bulkCheckoutBtn').addEventListener('click', () => this.bulkCheckout());
-                
-                // Enter key support for search
-                document.getElementById('searchBox').addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') {
-                        this.performSearch();
-                    }
-                });
-                
-                // Real-time search as user types
-                document.getElementById('searchBox').addEventListener('input', () => {
-                    clearTimeout(this.searchTimeout);
-                    this.searchTimeout = setTimeout(() => {
-                        const query = document.getElementById('searchBox').value.trim();
-                        if (query.length >= 2) {
-                            this.performSearch();
-                        } else if (query.length === 0) {
-                            this.clearSearch();
-                        }
-                    }, 300);
-                });
-            }
-            
-            async loadAllData() {
-                await Promise.all([
-                    this.loadStats(),
-                    this.loadSpaceOccupancy()
-                ]);
-            }
-            
-            async loadStats() {
-                try {
-                    const [studentsResponse, checkinsResponse, spacesResponse] = await Promise.all([
-                        fetch('/students'),
-                        fetch('/current-checkins'),
-                        fetch('/spaces')
-                    ]);
-                    
-                    const studentsData = await studentsResponse.json();
-                    const checkinsData = await checkinsResponse.json();
-                    const spacesData = await spacesResponse.json();
-                    
-                    const totalStudents = studentsData.students?.length || 0;
-                    const activeCheckins = checkinsData.current_checkins?.length || 0;
-                    const totalSpaces = spacesData.spaces?.length || 0;
-                    
-                    // Count occupied spaces
-                    const occupiedSpaces = new Set(
-                        checkinsData.current_checkins?.map(checkin => checkin.space_id) || []
-                    ).size;
-                    
-                    document.getElementById('totalStudents').textContent = totalStudents;
-                    document.getElementById('activeCheckins').textContent = activeCheckins;
-                    document.getElementById('totalSpaces').textContent = totalSpaces;
-                    document.getElementById('occupiedSpaces').textContent = occupiedSpaces;
-                    
-                } catch (error) {
-                    console.error('Failed to load stats:', error);
+        <script>
+            class AdminDashboard {
+                constructor() {
+                    this.refreshInterval = null;
+                    this.init();
                 }
-            }
-            
-            async loadSpaceOccupancy() {
-                try {
-                    const [spacesResponse, checkinsResponse] = await Promise.all([
-                        fetch('/spaces'),
-                        fetch('/current-checkins')
-                    ]);
+                
+                async init() {
+                    this.setupEventListeners();
+                    await this.loadAllData();
+                    this.startAutoRefresh();
+                }
+                
+                setupEventListeners() {
+                    document.getElementById('searchBtn').addEventListener('click', () => this.performSearch());
+                    document.getElementById('clearSearchBtn').addEventListener('click', () => this.clearSearch());
+                    document.getElementById('refreshBtn').addEventListener('click', () => this.loadAllData());
+                    document.getElementById('exportBtn').addEventListener('click', () => this.exportData());
+                    document.getElementById('bulkCheckoutBtn').addEventListener('click', () => this.bulkCheckout());
                     
-                    const spacesData = await spacesResponse.json();
-                    const checkinsData = await checkinsResponse.json();
-                    
-                    const spaces = spacesData.spaces || [];
-                    const checkins = checkinsData.current_checkins || [];
-                    
-                    // Group checkins by space
-                    const checkinsBySpace = {};
-                    checkins.forEach(checkin => {
-                        if (!checkinsBySpace[checkin.space_id]) {
-                            checkinsBySpace[checkin.space_id] = [];
+                    // Enter key support for search
+                    document.getElementById('searchBox').addEventListener('keypress', (e) => {
+                        if (e.key === 'Enter') {
+                            this.performSearch();
                         }
-                        checkinsBySpace[checkin.space_id].push(checkin);
                     });
                     
-                    const container = document.getElementById('spaceOccupancy');
+                    // Real-time search as user types
+                    document.getElementById('searchBox').addEventListener('input', () => {
+                        clearTimeout(this.searchTimeout);
+                        this.searchTimeout = setTimeout(() => {
+                            const query = document.getElementById('searchBox').value.trim();
+                            if (query.length >= 2) {
+                                this.performSearch();
+                            } else if (query.length === 0) {
+                                this.clearSearch();
+                            }
+                        }, 300);
+                    });
+                }
+                
+                async loadAllData() {
+                    await Promise.all([
+                        this.loadStats(),
+                        this.loadSpaceOccupancy()
+                    ]);
+                }
+                
+                async loadStats() {
+                    try {
+                        const [studentsResponse, checkinsResponse, spacesResponse] = await Promise.all([
+                            fetch('/students'),
+                            fetch('/current-checkins'),
+                            fetch('/spaces')
+                        ]);
+                        
+                        const studentsData = await studentsResponse.json();
+                        const checkinsData = await checkinsResponse.json();
+                        const spacesData = await spacesResponse.json();
+                        
+                        const totalStudents = studentsData.students?.length || 0;
+                        const activeCheckins = checkinsData.current_checkins?.length || 0;
+                        const totalSpaces = spacesData.spaces?.length || 0;
+                        
+                        // Count occupied spaces
+                        const occupiedSpaces = new Set(
+                            checkinsData.current_checkins?.map(checkin => checkin.space_id) || []
+                        ).size;
+                        
+                        document.getElementById('totalStudents').textContent = totalStudents;
+                        document.getElementById('activeCheckins').textContent = activeCheckins;
+                        document.getElementById('totalSpaces').textContent = totalSpaces;
+                        document.getElementById('occupiedSpaces').textContent = occupiedSpaces;
+                        
+                    } catch (error) {
+                        console.error('Failed to load stats:', error);
+                    }
+                }
+                
+                async loadSpaceOccupancy() {
+                    try {
+                        const [spacesResponse, checkinsResponse] = await Promise.all([
+                            fetch('/spaces'),
+                            fetch('/current-checkins')
+                        ]);
+                        
+                        const spacesData = await spacesResponse.json();
+                        const checkinsData = await checkinsResponse.json();
+                        
+                        const spaces = spacesData.spaces || [];
+                        const checkins = checkinsData.current_checkins || [];
+                        
+                        // Group checkins by space
+                        const checkinsBySpace = {};
+                        checkins.forEach(checkin => {
+                            if (!checkinsBySpace[checkin.space_id]) {
+                                checkinsBySpace[checkin.space_id] = [];
+                            }
+                            checkinsBySpace[checkin.space_id].push(checkin);
+                        });
+                        
+                        const container = document.getElementById('spaceOccupancy');
+                        
+                        if (spaces.length === 0) {
+                            container.innerHTML = '<div class="status info">No spaces configured</div>';
+                            return;
+                        }
+                        
+                        container.innerHTML = spaces.map(space => {
+                            const spaceCheckins = checkinsBySpace[space.space_id] || [];
+                            const count = spaceCheckins.length;
+                            
+                            let badgeClass = 'empty';
+                            if (count > 0) badgeClass = 'low';
+                            if (count > 5) badgeClass = 'medium';
+                            if (count > 10) badgeClass = 'high';
+                            
+                            const studentsList = spaceCheckins.length > 0 
+                                ? spaceCheckins.map(checkin => `
+                                    <div class="student-item">
+                                        <div class="student-info">
+                                            <div class="student-name">${checkin.display_name || checkin.encrypted_name}</div>
+                                            <div class="student-details">#${checkin.student_number}</div>
+                                        </div>
+                                        <div class="time-badge">
+                                            ${new Date(checkin.time_in).toLocaleTimeString()}
+                                        </div>
+                                    </div>
+                                `).join('')
+                                : '<div class="status info">No students currently checked in</div>';
+                            
+                            return `
+                                <div class="space-card">
+                                    <div class="space-header">
+                                        <div class="space-name">${space.space_name}</div>
+                                        <div class="occupancy-badge ${badgeClass}">
+                                            ${count} student${count !== 1 ? 's' : ''}
+                                        </div>
+                                    </div>
+                                    <div class="student-list">
+                                        ${studentsList}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('');
+                        
+                    } catch (error) {
+                        console.error('Failed to load space occupancy:', error);
+                        document.getElementById('spaceOccupancy').innerHTML = 
+                            '<div class="status error">Failed to load space data</div>';
+                    }
+                }
+                
+                async performSearch() {
+                    const query = document.getElementById('searchBox').value.trim();
                     
-                    if (spaces.length === 0) {
-                        container.innerHTML = '<div class="status info">No spaces configured</div>';
+                    if (!query) {
+                        this.showSearchStatus('Please enter a search term', 'error');
                         return;
                     }
                     
-                    container.innerHTML = spaces.map(space => {
-                        const spaceCheckins = checkinsBySpace[space.space_id] || [];
-                        const count = spaceCheckins.length;
+                    try {
+                        const response = await fetch(`/search?q=${encodeURIComponent(query)}`);
+                        const data = await response.json();
                         
-                        let badgeClass = 'empty';
-                        if (count > 0) badgeClass = 'low';
-                        if (count > 5) badgeClass = 'medium';
-                        if (count > 10) badgeClass = 'high';
-                        
-                        const studentsList = spaceCheckins.length > 0 
-                            ? spaceCheckins.map(checkin => `
-                                <div class="student-item">
-                                    <div class="student-info">
-                                        <div class="student-name">${checkin.display_name || checkin.encrypted_name}</div>
-                                        <div class="student-details">#${checkin.student_number}</div>
-                                    </div>
-                                    <div class="time-badge">
-                                        ${new Date(checkin.time_in).toLocaleTimeString()}
-                                    </div>
-                                </div>
-                            `).join('')
-                            : '<div class="status info">No students currently checked in</div>';
-                        
+                        if (data.status === 'success') {
+                            this.displaySearchResults(data.results);
+                        } else {
+                            this.showSearchStatus(data.message, 'error');
+                        }
+                    } catch (error) {
+                        console.error('Search error:', error);
+                        this.showSearchStatus('Search failed. Please try again.', 'error');
+                    }
+                }
+                
+                displaySearchResults(results) {
+                    const container = document.getElementById('searchResults');
+                    
+                    if (results.length === 0) {
+                        container.innerHTML = '<div class="status info">No students found</div>';
+                        return;
+                    }
+                    
+                    container.innerHTML = results.map(result => {
+                        const locationInfo = result.current_location 
+                            ? `Currently in: <strong>${result.current_location}</strong><br>Since: ${new Date(result.check_in_time).toLocaleString()}`
+                            : 'Not currently checked in';
+                            
                         return `
-                            <div class="space-card">
-                                <div class="space-header">
-                                    <div class="space-name">${space.space_name}</div>
-                                    <div class="occupancy-badge ${badgeClass}">
-                                        ${count} student${count !== 1 ? 's' : ''}
+                            <div class="student-item">
+                                <div class="student-info">
+                                    <div class="student-name">${result.student.encrypted_name}</div>
+                                    <div class="student-details">
+                                        #${result.student.student_number}<br>
+                                        ${locationInfo}
                                     </div>
-                                </div>
-                                <div class="student-list">
-                                    ${studentsList}
                                 </div>
                             </div>
                         `;
                     }).join('');
-                    
-                } catch (error) {
-                    console.error('Failed to load space occupancy:', error);
-                    document.getElementById('spaceOccupancy').innerHTML = 
-                        '<div class="status error">Failed to load space data</div>';
-                }
-            }
-            
-            async performSearch() {
-                const query = document.getElementById('searchBox').value.trim();
-                
-                if (!query) {
-                    this.showSearchStatus('Please enter a search term', 'error');
-                    return;
                 }
                 
-                try {
-                    const response = await fetch(`/search?q=${encodeURIComponent(query)}`);
-                    const data = await response.json();
-                    
-                    if (data.status === 'success') {
-                        this.displaySearchResults(data.results);
-                    } else {
-                        this.showSearchStatus(data.message, 'error');
-                    }
-                } catch (error) {
-                    console.error('Search error:', error);
-                    this.showSearchStatus('Search failed. Please try again.', 'error');
-                }
-            }
-            
-            displaySearchResults(results) {
-                const container = document.getElementById('searchResults');
-                
-                if (results.length === 0) {
-                    container.innerHTML = '<div class="status info">No students found</div>';
-                    return;
+                clearSearch() {
+                    document.getElementById('searchBox').value = '';
+                    document.getElementById('searchResults').innerHTML = 
+                        '<div class="status info">Enter a student name or number to search</div>';
                 }
                 
-                container.innerHTML = results.map(result => {
-                    const locationInfo = result.current_location 
-                        ? `Currently in: <strong>${result.current_location}</strong><br>Since: ${new Date(result.check_in_time).toLocaleString()}`
-                        : 'Not currently checked in';
+                showSearchStatus(message, type) {
+                    document.getElementById('searchResults').innerHTML = 
+                        `<div class="status ${type}">${message}</div>`;
+                }
+                
+                async exportData() {
+                    try {
+                        const response = await fetch('/current-checkins');
+                        const data = await response.json();
+                        const checkins = data.current_checkins || [];
                         
-                    return `
-                        <div class="student-item">
-                            <div class="student-info">
-                                <div class="student-name">${result.student.encrypted_name}</div>
-                                <div class="student-details">
-                                    #${result.student.student_number}<br>
-                                    ${locationInfo}
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-            }
-            
-            clearSearch() {
-                document.getElementById('searchBox').value = '';
-                document.getElementById('searchResults').innerHTML = 
-                    '<div class="status info">Enter a student name or number to search</div>';
-            }
-            
-            showSearchStatus(message, type) {
-                document.getElementById('searchResults').innerHTML = 
-                    `<div class="status ${type}">${message}</div>`;
-            }
-            
-            async exportData() {
-                try {
-                    const response = await fetch('/current-checkins');
-                    const data = await response.json();
-                    const checkins = data.current_checkins || [];
-                    
-                    if (checkins.length === 0) {
-                        this.showAdminStatus('No data to export', 'info');
+                        if (checkins.length === 0) {
+                            this.showAdminStatus('No data to export', 'info');
+                            return;
+                        }
+                        
+                        // Create CSV content
+                        const headers = ['Student Name', 'Student Number', 'Space', 'Check-in Time'];
+                        const csvContent = [
+                            headers.join(','),
+                            ...checkins.map(checkin => [
+                                `"${checkin.display_name || checkin.encrypted_name}"`,
+                                checkin.student_number,
+                                `"${checkin.space_name}"`,
+                                `"${new Date(checkin.time_in).toLocaleString()}"`
+                            ].join(','))
+                        ].join('\\n');
+                        
+                        // Download CSV
+                        const blob = new Blob([csvContent], { type: 'text/csv' });
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `checkins-${new Date().toISOString().split('T')[0]}.csv`;
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        
+                        this.showAdminStatus(`Exported ${checkins.length} records`, 'success');
+                    } catch (error) {
+                        this.showAdminStatus('Export failed', 'error');
+                    }
+                }
+                
+                async bulkCheckout() {
+                    if (!confirm('Are you sure you want to check out ALL students? This cannot be undone.')) {
                         return;
                     }
                     
-                    // Create CSV content
-                    const headers = ['Student Name', 'Student Number', 'Space', 'Check-in Time'];
-                    const csvContent = [
-                        headers.join(','),
-                        ...checkins.map(checkin => [
-                            `"${checkin.display_name || checkin.encrypted_name}"`,
-                            checkin.student_number,
-                            `"${checkin.space_name}"`,
-                            `"${new Date(checkin.time_in).toLocaleString()}"`
-                        ].join(','))
-                    ].join('\\n');
-                    
-                    // Download CSV
-                    const blob = new Blob([csvContent], { type: 'text/csv' });
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `checkins-${new Date().toISOString().split('T')[0]}.csv`;
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                    
-                    this.showAdminStatus(`Exported ${checkins.length} records`, 'success');
-                } catch (error) {
-                    this.showAdminStatus('Export failed', 'error');
-                }
-            }
-            
-            async bulkCheckout() {
-                if (!confirm('Are you sure you want to check out ALL students? This cannot be undone.')) {
-                    return;
-                }
-                
-                try {
-                    const response = await fetch('/bulk-checkout', { method: 'POST' });
-                    const data = await response.json();
-                    
-                    if (data.status === 'success') {
-                        this.showAdminStatus(`${data.checked_out_count} students checked out`, 'success');
-                        await this.loadAllData();
-                    } else {
-                        this.showAdminStatus(data.message, 'error');
+                    try {
+                        const response = await fetch('/bulk-checkout', { method: 'POST' });
+                        const data = await response.json();
+                        
+                        if (data.status === 'success') {
+                            this.showAdminStatus(`${data.checked_out_count} students checked out`, 'success');
+                            await this.loadAllData();
+                        } else {
+                            this.showAdminStatus(data.message, 'error');
+                        }
+                    } catch (error) {
+                        this.showAdminStatus('Bulk checkout failed', 'error');
                     }
-                } catch (error) {
-                    this.showAdminStatus('Bulk checkout failed', 'error');
                 }
-            }
-            
-            showAdminStatus(message, type) {
-                const element = document.getElementById('adminStatus');
-                element.textContent = message;
-                element.className = `status ${type}`;
-                element.classList.remove('hidden');
                 
-                // Auto-hide after 5 seconds
-                setTimeout(() => {
-                    element.classList.add('hidden');
-                }, 5000);
-            }
-            
-            startAutoRefresh() {
-                // Refresh data every 30 seconds
-                this.refreshInterval = setInterval(() => {
-                    this.loadAllData();
-                }, 30000);
-            }
-            
-            stopAutoRefresh() {
-                if (this.refreshInterval) {
-                    clearInterval(this.refreshInterval);
-                    this.refreshInterval = null;
+                showAdminStatus(message, type) {
+                    const element = document.getElementById('adminStatus');
+                    element.textContent = message;
+                    element.className = `status ${type}`;
+                    element.classList.remove('hidden');
+                    
+                    // Auto-hide after 5 seconds
+                    setTimeout(() => {
+                        element.classList.add('hidden');
+                    }, 5000);
+                }
+                
+                startAutoRefresh() {
+                    // Refresh data every 30 seconds
+                    this.refreshInterval = setInterval(() => {
+                        this.loadAllData();
+                    }, 30000);
+                }
+                
+                stopAutoRefresh() {
+                    if (this.refreshInterval) {
+                        clearInterval(this.refreshInterval);
+                        this.refreshInterval = null;
+                    }
                 }
             }
-        }
-        
-        // Initialize the dashboard when page loads
-        document.addEventListener('DOMContentLoaded', () => {
-            window.adminDashboard = new AdminDashboard();
-        });
-        
-        // Clean up when page unloads
-        window.addEventListener('beforeunload', () => {
-            if (window.adminDashboard) {
-                window.adminDashboard.stopAutoRefresh();
-            }
-        });
-    </script>
-</body>
-</html>"""
+            
+            // Initialize the dashboard when page loads
+            document.addEventListener('DOMContentLoaded', () => {
+                window.adminDashboard = new AdminDashboard();
+            });
+            
+            // Clean up when page unloads
+            window.addEventListener('beforeunload', () => {
+                if (window.adminDashboard) {
+                    window.adminDashboard.stopAutoRefresh();
+                }
+            });
+        </script>
+    </body>
+    </html>"""
     
-    return Response(
-        html_content,
-        headers={"Content-Type": "text/html"}
-    )
+        return Response(
+            html_content,
+            headers={"Content-Type": "text/html"}
+        )
