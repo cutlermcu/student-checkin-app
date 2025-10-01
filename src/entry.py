@@ -101,140 +101,6 @@ class DatabaseManager:
                 "meta": {}
             }
             
-            async loadSpaceManagement() {
-                try {
-                    const response = await fetch('/spaces');
-                    const data = await response.json();
-                    const spaces = data.spaces || [];
-                    
-                    const container = document.getElementById('spaceManagement');
-                    
-                    if (spaces.length === 0) {
-                        container.innerHTML = '<div class="status info">No spaces configured</div>';
-                        return;
-                    }
-                    
-                    container.innerHTML = spaces.map(space => `
-                        <div class="space-management-item">
-                            <div class="space-info">
-                                <div class="space-title">${space.space_name}</div>
-                                <div class="space-desc">${space.description || 'No description'}</div>
-                            </div>
-                            <div class="space-actions">
-                                <button onclick="adminDashboard.editSpace(${space.space_id}, '${space.space_name.replace(/'/g, "\\'")}', '${(space.description || '').replace(/'/g, "\\'")}')">Edit</button>
-                                <button class="danger" onclick="adminDashboard.deleteSpace(${space.space_id}, '${space.space_name.replace(/'/g, "\\'")}')">Delete</button>
-                            </div>
-                        </div>
-                    `).join('');
-                    
-                } catch (error) {
-                    console.error('Failed to load spaces:', error);
-                    document.getElementById('spaceManagement').innerHTML = 
-                        '<div class="status error">Failed to load spaces</div>';
-                }
-            }
-            
-            showAddSpaceModal() {
-                this.currentEditingSpaceId = null;
-                document.getElementById('modalTitle').textContent = 'Add New Space';
-                document.getElementById('spaceName').value = '';
-                document.getElementById('spaceDescription').value = '';
-                document.getElementById('spaceModal').style.display = 'block';
-                document.getElementById('spaceName').focus();
-            }
-            
-            editSpace(spaceId, spaceName, description) {
-                this.currentEditingSpaceId = spaceId;
-                document.getElementById('modalTitle').textContent = 'Edit Space';
-                document.getElementById('spaceName').value = spaceName;
-                document.getElementById('spaceDescription').value = description;
-                document.getElementById('spaceModal').style.display = 'block';
-                document.getElementById('spaceName').focus();
-            }
-            
-            hideSpaceModal() {
-                document.getElementById('spaceModal').style.display = 'none';
-                this.currentEditingSpaceId = null;
-            }
-            
-            async saveSpace() {
-                const spaceName = document.getElementById('spaceName').value.trim();
-                const description = document.getElementById('spaceDescription').value.trim();
-                
-                if (!spaceName) {
-                    this.showSpaceStatus('Space name is required', 'error');
-                    return;
-                }
-                
-                try {
-                    let response;
-                    if (this.currentEditingSpaceId) {
-                        // Update existing space
-                        response = await fetch(`/spaces/${this.currentEditingSpaceId}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ space_name: spaceName, description })
-                        });
-                    } else {
-                        // Create new space
-                        response = await fetch('/spaces', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ space_name: spaceName, description })
-                        });
-                    }
-                    
-                    const data = await response.json();
-                    
-                    if (data.status === 'success') {
-                        this.showSpaceStatus(data.message, 'success');
-                        this.hideSpaceModal();
-                        await this.loadSpaceManagement();
-                        await this.loadSpaceOccupancy(); // Refresh occupancy too
-                    } else {
-                        this.showSpaceStatus(data.message, 'error');
-                    }
-                } catch (error) {
-                    this.showSpaceStatus('Failed to save space', 'error');
-                }
-            }
-            
-            async deleteSpace(spaceId, spaceName) {
-                if (!confirm(`Are you sure you want to delete "${spaceName}"? This cannot be undone.`)) {
-                    return;
-                }
-                
-                try {
-                    const response = await fetch(`/spaces/${spaceId}`, {
-                        method: 'DELETE'
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (data.status === 'success') {
-                        this.showSpaceStatus(data.message, 'success');
-                        await this.loadSpaceManagement();
-                        await this.loadSpaceOccupancy(); // Refresh occupancy too
-                    } else {
-                        this.showSpaceStatus(data.message, 'error');
-                    }
-                } catch (error) {
-                    this.showSpaceStatus('Failed to delete space', 'error');
-                }
-            }
-            
-            showSpaceStatus(message, type) {
-                const element = document.getElementById('spaceStatus');
-                element.textContent = message;
-                element.className = `status ${type}`;
-                element.classList.remove('hidden');
-                
-                // Auto-hide after 5 seconds
-                setTimeout(() => {
-                    element.classList.add('hidden');
-                }, 5000);
-            }
-            
             # Convert results if they exist
             if hasattr(result, 'results') and result.results is not None:
                 converted_result["results"] = []
@@ -548,19 +414,8 @@ class Default(WorkerEntrypoint):
             elif path == 'spaces' and request.method == 'GET':
                 return await self.list_spaces(db)
             
-            elif path == 'spaces' and request.method == 'POST':
-                return await self.create_space_endpoint(db, request)
-            
-            elif path.startswith('spaces/') and request.method == 'PUT':
-                space_id = int(path.split('/')[-1])
-                return await self.update_space_endpoint(db, request, space_id)
-            
-            elif path.startswith('spaces/') and request.method == 'DELETE':
-                space_id = int(path.split('/')[-1])
-                return await self.delete_space_endpoint(db, space_id)
-            
             elif path == 'current-checkins' and request.method == 'GET':
-                return await self.current_checkins(db)
+                return await self.current_checkins(db, request)
             
             else:
                 # Default response
@@ -578,10 +433,7 @@ class Default(WorkerEntrypoint):
                             "/migrate-encryption": "GET - Migrate existing plain text names to encrypted",
                             "/test-encryption": "GET - Test encryption/decryption functionality",
                             "/students": "GET - List all students (names decrypted for display)",
-                            "/spaces": "GET - List all spaces",
-                            "/spaces": "POST - Create new space (JSON: {space_name, description})",
-                            "/spaces/{id}": "PUT - Update space (JSON: {space_name, description})",
-                            "/spaces/{id}": "DELETE - Delete space (if no active check-ins)",
+                            "/spaces": "GET - List all spaces", 
                             "/current-checkins": "GET - Show current check-ins",
                             "/search?q=term": "GET - Search students by name or number",
                             "/checkin-{student_number}-{space_id}": "GET - Quick checkin",
@@ -912,18 +764,33 @@ class Default(WorkerEntrypoint):
             headers={"Content-Type": "application/json"}
         )
     
-    async def current_checkins(self, db: DatabaseManager):
-        """Show current check-ins with decrypted names"""
-        checkins = await db.get_current_checkins()
-        # For API response, use display_name as encrypted_name for compatibility
-        for checkin in checkins:
-            if "display_name" in checkin:
-                checkin["encrypted_name"] = checkin["display_name"]
-        
-        return Response(
-            json.dumps({"current_checkins": checkins}),
-            headers={"Content-Type": "application/json"}
-        )
+    async def current_checkins(self, db: DatabaseManager, request=None):
+        """Show current check-ins, optionally filtered by space"""
+        try:
+            # Check for space_id query parameter
+            url = str(request.url) if request else ""
+            space_id = None
+            
+            if '?' in url and 'space_id=' in url:
+                query_string = url.split('?', 1)[1]
+                for param in query_string.split('&'):
+                    if param.startswith('space_id='):
+                        space_id_str = param.split('=', 1)[1]
+                        if space_id_str:
+                            space_id = int(space_id_str)
+                        break
+            
+            checkins = await db.get_current_checkins(space_id)
+            return Response(
+                json.dumps({"current_checkins": checkins}),
+                headers={"Content-Type": "application/json"}
+            )
+        except Exception as e:
+            return Response(
+                json.dumps({"error": str(e)}),
+                status=500,
+                headers={"Content-Type": "application/json"}
+            )
     
     async def quick_checkin(self, db: DatabaseManager, path):
         """Handle quick check-in with encrypted name support"""
@@ -1093,704 +960,655 @@ class Default(WorkerEntrypoint):
             headers={"Content-Type": "application/json"}
         )
     
-    async def create_space_endpoint(self, db: DatabaseManager, request):
-        """Create a new space"""
-        try:
-            body = await request.json()
-            space_name = body.get("space_name", "").strip()
-            description = body.get("description", "").strip()
-            
-            if not space_name:
-                return Response(
-                    json.dumps({"status": "error", "message": "Space name is required"}),
-                    status=400,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            success = await db.create_space(space_name, description)
-            
-            if success:
-                return Response(
-                    json.dumps({
-                        "status": "success",
-                        "message": f"Space '{space_name}' created successfully"
-                    }),
-                    headers={"Content-Type": "application/json"}
-                )
-            else:
-                return Response(
-                    json.dumps({"status": "error", "message": "Failed to create space (name may already exist)"}),
-                    status=400,
-                    headers={"Content-Type": "application/json"}
-                )
-                
-        except Exception as e:
-            return Response(
-                json.dumps({"status": "error", "message": str(e)}),
-                status=500,
-                headers={"Content-Type": "application/json"}
-            )
-    
-    async def update_space_endpoint(self, db: DatabaseManager, request, space_id: int):
-        """Update an existing space"""
-        try:
-            body = await request.json()
-            space_name = body.get("space_name", "").strip()
-            description = body.get("description", "").strip()
-            
-            if not space_name:
-                return Response(
-                    json.dumps({"status": "error", "message": "Space name is required"}),
-                    status=400,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            success = await db.update_space(space_id, space_name, description)
-            
-            if success:
-                return Response(
-                    json.dumps({
-                        "status": "success",
-                        "message": f"Space updated successfully"
-                    }),
-                    headers={"Content-Type": "application/json"}
-                )
-            else:
-                return Response(
-                    json.dumps({"status": "error", "message": "Space not found or name already exists"}),
-                    status=404,
-                    headers={"Content-Type": "application/json"}
-                )
-                
-        except Exception as e:
-            return Response(
-                json.dumps({"status": "error", "message": str(e)}),
-                status=500,
-                headers={"Content-Type": "application/json"}
-            )
-    
-    async def delete_space_endpoint(self, db: DatabaseManager, space_id: int):
-        """Delete a space"""
-        try:
-            result = await db.delete_space(space_id)
-            
-            if result["success"]:
-                return Response(
-                    json.dumps({
-                        "status": "success",
-                        "message": result["message"]
-                    }),
-                    headers={"Content-Type": "application/json"}
-                )
-            else:
-                return Response(
-                    json.dumps({"status": "error", "message": result["error"]}),
-                    status=400,
-                    headers={"Content-Type": "application/json"}
-                )
-                
-        except Exception as e:
-            return Response(
-                json.dumps({"status": "error", "message": str(e)}),
-                status=500,
-                headers={"Content-Type": "application/json"}
-            )
-    
     async def serve_web_interface(self):
         """Serve the main web interface with barcode scanning"""
         html_content = """<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Student Check-in System</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: Helvetica, Arial, sans-serif;
-            background: #1a5f3f;
-            min-height: 100vh;
-            color: #000;
-            margin: 0;
-            padding: 0;
-        }
-        
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 40px 20px;
-        }
-        
-        .header {
-            text-align: center;
-            color: white;
-            margin-bottom: 40px;
-        }
-        
-        .header h1 {
-            font-size: 2.5rem;
-            font-weight: normal;
-            margin-bottom: 8px;
-            letter-spacing: 0;
-        }
-        
-        .header p {
-            font-size: 1.1rem;
-            font-weight: normal;
-        }
-        
-        .card {
-            background: white;
-            padding: 32px;
-            margin-bottom: 30px;
-            border: 1px solid #ddd;
-        }
-        
-        .card h2 {
-            color: #000;
-            margin-bottom: 24px;
-            font-weight: bold;
-            font-size: 1.5rem;
-        }
-        
-        .scanner-section {
-            text-align: center;
-        }
-        
-        #video {
-            width: 100%;
-            max-width: 400px;
-            margin: 20px 0;
-            border: 1px solid #ddd;
-        }
-        
-        .controls {
-            display: flex;
-            gap: 12px;
-            justify-content: center;
-            flex-wrap: wrap;
-            margin: 24px 0;
-        }
-        
-        button {
-            background: #2d7a54;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            cursor: pointer;
-            font-size: 16px;
-            font-weight: bold;
-            font-family: Helvetica, Arial, sans-serif;
-            transition: all 0.3s ease;
-        }
-        
-        button:hover {
-            background: #1a5f3f;
-        }
-        
-        button:disabled {
-            background: #999;
-            cursor: not-allowed;
-        }
-        
-        .manual-entry {
-            text-align: center;
-        }
-        
-        .form-group {
-            margin-bottom: 24px;
-        }
-        
-        label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: bold;
-            color: #000;
-        }
-        
-        input, select {
-            width: 100%;
-            max-width: 300px;
-            padding: 16px;
-            border: 1px solid #000;
-            font-size: 16px;
-            font-family: Helvetica, Arial, sans-serif;
-        }
-        
-        input:focus, select:focus {
-            outline: 2px solid #2d7a54;
-            outline-offset: 0;
-        }
-        
-        .status {
-            margin: 20px 0;
-            padding: 16px;
-            font-weight: bold;
-            text-align: center;
-            border: 1px solid #ddd;
-        }
-        
-        .status.success {
-            background: #d1fae5;
-            color: #000;
-            border: 1px solid #a7f3d0;
-        }
-        
-        .status.error {
-            background: #fee2e2;
-            color: #000;
-            border: 1px solid #fecaca;
-        }
-        
-        .status.info {
-            background: #e0f2fe;
-            color: #000;
-            border: 1px solid #bae6fd;
-        }
-        
-        .current-checkins {
-            margin-top: 40px;
-        }
-        
-        .checkin-item {
-            background: #f8faf9;
-            padding: 20px;
-            margin: 12px 0;
-            border-left: 4px solid #2d7a54;
-        }
-        
-        .hidden {
-            display: none;
-        }
-        
-        .space-management-item {
-            background: #f8faf9;
-            padding: 20px;
-            margin: 12px 0;
-            border-left: 4px solid #2d7a54;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .space-info {
-            flex-grow: 1;
-        }
-        
-        .space-title {
-            font-weight: bold;
-            font-size: 1.1rem;
-            margin-bottom: 4px;
-        }
-        
-        .space-desc {
-            color: #666;
-            font-size: 0.9rem;
-        }
-        
-        .space-actions {
-            display: flex;
-            gap: 8px;
-        }
-        
-        .space-actions button {
-            padding: 8px 16px;
-            font-size: 14px;
-        }
-        
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.5);
-        }
-        
-        .modal-content {
-            background-color: white;
-            margin: 15% auto;
-            padding: 32px;
-            border: 1px solid #ddd;
-            width: 80%;
-            max-width: 500px;
-        }
-        
-        .modal h3 {
-            margin-bottom: 20px;
-            color: #000;
-        }
-        
-        .modal input, .modal textarea {
-            width: 100%;
-            padding: 12px;
-            margin-bottom: 16px;
-            border: 1px solid #000;
-            font-family: Helvetica, Arial, sans-serif;
-        }
-        
-        .modal textarea {
-            height: 80px;
-            resize: vertical;
-        }
-        
-        .modal-buttons {
-            display: flex;
-            gap: 12px;
-            justify-content: flex-end;
-        }
-        
-        .modal-buttons button {
-            padding: 12px 24px;
-        }
-        
-        @media (max-width: 600px) {
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Student Check-in System</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            
+            body {
+                font-family: Helvetica, Arial, sans-serif;
+                background: #1a5f3f;
+                min-height: 100vh;
+                color: #000;
+                margin: 0;
+                padding: 0;
+            }
+            
             .container {
-                padding: 15px;
+                max-width: 1000px;
+                margin: 0 auto;
+                padding: 40px 20px;
+            }
+            
+            .header {
+                text-align: center;
+                color: white;
+                margin-bottom: 40px;
+            }
+            
+            .header h1 {
+                font-size: 2.5rem;
+                font-weight: normal;
+                margin-bottom: 8px;
+                letter-spacing: 0;
+            }
+            
+            .header p {
+                font-size: 1.1rem;
+                font-weight: normal;
+            }
+            
+            .space-selector {
+                background: white;
+                padding: 32px;
+                margin-bottom: 30px;
+                border: 1px solid #ddd;
+                text-align: center;
+            }
+            
+            .space-selector h2 {
+                color: #000;
+                margin-bottom: 24px;
+                font-weight: bold;
+                font-size: 1.5rem;
+            }
+            
+            .main-layout {
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 30px;
+                margin-bottom: 30px;
+        }
+
+            .entry-section {
+                grid-column: 1 / -1;
+        }
+                    
+            .card {
+                background: white;
+                padding: 32px;
+                border: 1px solid #ddd;
+        }
+            
+            .card h2 {
+                color: #000;
+                margin-bottom: 24px;
+                font-weight: bold;
+                font-size: 1.5rem;
+            }
+            
+            .input-mode-selector {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 20px;
+                margin-bottom: 30px;
+            }
+
+            .toggle-switch {
+                position: relative;
+                width: 60px;
+                height: 30px;
+                background: #d1d5db;
+                border-radius: 15px;
+                cursor: pointer;
+                transition: background 0.3s ease;
+            }
+
+            .toggle-switch.active {
+                background: #2d7a54;
+            }
+
+            .toggle-slider {
+                position: absolute;
+                top: 3px;
+                left: 3px;
+                width: 24px;
+                height: 24px;
+                background: white;
+                border-radius: 50%;
+                transition: transform 0.3s ease;
+            }
+
+            .toggle-switch.active .toggle-slider {
+                transform: translateX(30px);
+            }
+
+            .toggle-label {
+                font-weight: bold;
+                color: #000;
+                font-size: 16px;
+            }
+
+            .toggle-label.inactive {
+                color: #666;
+            }
+            
+            .manual-entry {
+                text-align: center;
+            }
+            
+            .scanner-section {
+                text-align: center;
+            }
+            
+            #video {
+                width: 100%;
+                max-width: 400px;
+                margin: 20px 0;
+                border: 1px solid #ddd;
+            }
+            
+            .form-group {
+                margin-bottom: 24px;
+            }
+            
+            label {
+                display: block;
+                margin-bottom: 8px;
+                font-weight: bold;
+                color: #000;
+            }
+            
+            input, select {
+                width: 100%;
+                max-width: 300px;
+                padding: 16px;
+                border: 1px solid #000;
+                font-size: 16px;
+                font-family: Helvetica, Arial, sans-serif;
+            }
+            
+            input:focus, select:focus {
+                outline: 2px solid #2d7a54;
+                outline-offset: 0;
             }
             
             .controls {
-                flex-direction: column;
-                align-items: center;
+                display: flex;
+                gap: 12px;
+                justify-content: center;
+                flex-wrap: wrap;
+                margin: 24px 0;
             }
             
             button {
-                width: 200px;
+                background: #2d7a54;
+                color: white;
+                border: none;
+                padding: 12px 24px;
+                cursor: pointer;
+                font-size: 16px;
+                font-weight: bold;
+                font-family: Helvetica, Arial, sans-serif;
+                transition: all 0.3s ease;
             }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>Student Check-in System</h1>
-            <p>Scan your student ID or enter your student number</p>
-        </div>
-        
-        <div class="card scanner-section">
-            <h2>Barcode Scanner</h2>
-            <video id="video" class="hidden"></video>
-            <canvas id="canvas" class="hidden"></canvas>
             
-            <div class="controls">
-                <button id="startScanner">Start Scanner</button>
-                <button id="stopScanner" disabled>Stop Scanner</button>
+            button:hover {
+                background: #1a5f3f;
+            }
+            
+            button:disabled {
+                background: #999;
+                cursor: not-allowed;
+            }
+            
+            .status {
+                margin: 20px 0;
+                padding: 16px;
+                font-weight: bold;
+                text-align: center;
+                border: 1px solid #ddd;
+            }
+            
+            .status.success {
+                background: #d1fae5;
+                color: #000;
+                border: 1px solid #a7f3d0;
+            }
+            
+            .status.error {
+                background: #fee2e2;
+                color: #000;
+                border: 1px solid #fecaca;
+            }
+            
+            .status.info {
+                background: #e0f2fe;
+                color: #000;
+                border: 1px solid #bae6fd;
+            }
+            
+            .current-checkins {
+                grid-column: 1 / -1;
+            }
+            
+            .checkin-item {
+                background: #f8faf9;
+                padding: 20px;
+                margin: 12px 0;
+                border-left: 4px solid #2d7a54;
+            }
+            
+            .hidden {
+                display: none;
+            }
+            
+            .disabled-section {
+                opacity: 0.5;
+                pointer-events: none;
+            }
+            
+            @media (max-width: 768px) {
+                .main-layout {
+                    grid-template-columns: 1fr;
+                }
+                
+                .container {
+                    padding: 15px;
+                }
+                
+                .controls {
+                    flex-direction: column;
+                    align-items: center;
+                }
+                
+                button {
+                    width: 200px;
+                }
+                
+                .input-mode-selector {
+                    flex-direction: column;
+                    align-items: center;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>Student Check-in System</h1>
+                <p>Select your space and enter your student number</p>
             </div>
             
-            <div id="scanResult" class="status info hidden">
-                Ready to scan - point camera at barcode
-            </div>
-        </div>
-        
-        <div class="card manual-entry">
-            <h2>Manual Entry</h2>
-            
-            <div class="form-group">
-                <label for="studentNumber">Student Number:</label>
-                <input type="text" id="studentNumber" placeholder="Enter student number (e.g. 12345)">
-            </div>
-            
-            <div class="form-group">
-                <label for="spaceSelect">Space:</label>
-                <div style="display: flex; gap: 10px; align-items: center; justify-content: center;">
+            <div class="space-selector">
+                <h2>Select Space</h2>
+                <div class="form-group">
                     <select id="spaceSelect">
                         <option value="">Loading spaces...</option>
                     </select>
-                    <button type="button" id="clearSpaceBtn" style="padding: 8px 12px; font-size: 14px;">Clear</button>
                 </div>
             </div>
             
-            <div class="controls">
-                <button id="checkinBtn">Check In</button>
-                <button id="checkoutBtn">Check Out</button>
-            </div>
-            
-            <div id="manualResult" class="status info hidden">
-                Enter student number and select space
-            </div>
-        </div>
-        
-        <div class="card current-checkins">
-            <h2>Current Check-ins</h2>
-            <div id="currentCheckins">
-                <div class="status info">Loading current check-ins...</div>
-            </div>
-            <button id="refreshBtn">Refresh Status</button>
-        </div>
-    </div>
-
-    <!-- Space Management Modal -->
-    <div id="spaceModal" class="modal">
-        <div class="modal-content">
-            <h3 id="modalTitle">Add New Space</h3>
-            <input type="text" id="spaceName" placeholder="Space name (e.g., Library Study Hall)">
-            <textarea id="spaceDescription" placeholder="Description (optional)"></textarea>
-            <div class="modal-buttons">
-                <button id="cancelSpaceBtn">Cancel</button>
-                <button id="saveSpaceBtn">Save</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Include QuaggaJS for barcode scanning -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
-    
-    <script>
-        class StudentCheckinApp {
-            constructor() {
-                this.isScanning = false;
-                this.spaces = [];
-                this.init();
-            }
-            
-            async init() {
-                this.setupEventListeners();
-                await this.loadSpaces();
-                await this.loadCurrentCheckins();
-            }
-            
-            setupEventListeners() {
-                document.getElementById('startScanner').addEventListener('click', () => this.startScanner());
-                document.getElementById('stopScanner').addEventListener('click', () => this.stopScanner());
-                document.getElementById('checkinBtn').addEventListener('click', () => this.manualCheckin());
-                document.getElementById('checkoutBtn').addEventListener('click', () => this.manualCheckout());
-                document.getElementById('refreshBtn').addEventListener('click', () => this.loadCurrentCheckins());
-                document.getElementById('clearSpaceBtn').addEventListener('click', () => this.clearSpace());
+            <div class="main-layout">
+                <div class="card entry-section">
+                    <h2>Student Number Entry</h2>
+                    
+                    <div class="input-mode-selector">
+                        <span class="toggle-label" id="manualLabel">Manual Entry</span>
+                        <div class="toggle-switch" id="modeToggle">
+                            <div class="toggle-slider"></div>
+                        </div>
+                        <span class="toggle-label inactive" id="scannerLabel">Use Scanner</span>
+                    </div>
+                    
+                    <div id="manualEntrySection" class="manual-entry">
+                        <div class="form-group">
+                            <label for="studentNumber">Student Number:</label>
+                            <input type="text" id="studentNumber" placeholder="Enter student number (e.g. 12345)">
+                        </div>
+                        
+                        <div class="controls">
+                            <button id="checkinBtn">Check In</button>
+                            <button id="checkoutBtn">Check Out</button>
+                        </div>
+                        
+                        <div id="manualResult" class="status info hidden">
+                            Select a space and enter student number
+                        </div>
+                    </div>
+                    
+                    <div id="scannerSection" class="scanner-section hidden">
+                        <video id="video" class="hidden"></video>
+                        <canvas id="canvas" class="hidden"></canvas>
+                        
+                        <div class="controls">
+                            <button id="startScanner">Start Scanner</button>
+                            <button id="stopScanner" disabled>Stop Scanner</button>
+                        </div>
+                        
+                        <div id="scanResult" class="status info hidden">
+                            Ready to scan - point camera at barcode
+                        </div>
+                    </div>
+                </div>
                 
-                // Enter key support for student number input
-                document.getElementById('studentNumber').addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') {
-                        this.manualCheckin();
-                    }
-                });
-            }
-            
-            async loadSpaces() {
-                try {
-                    const response = await fetch('/spaces');
-                    const data = await response.json();
-                    this.spaces = data.spaces || [];
-                    
-                    const select = document.getElementById('spaceSelect');
-                    select.innerHTML = '<option value="">Select a space...</option>';
-                    
-                    this.spaces.forEach(space => {
-                        const option = document.createElement('option');
-                        option.value = space.space_id;
-                        option.textContent = space.space_name;
-                        select.appendChild(option);
-                    });
-                } catch (error) {
-                    console.error('Failed to load spaces:', error);
-                    this.showStatus('manualResult', 'Failed to load spaces', 'error');
-                }
-            }
-            
-            async loadCurrentCheckins() {
-                try {
-                    const response = await fetch('/current-checkins');
-                    const data = await response.json();
-                    const checkins = data.current_checkins || [];
-                    
-                    const container = document.getElementById('currentCheckins');
-                    
-                    if (checkins.length === 0) {
-                        container.innerHTML = '<div class="status info">No students currently checked in</div>';
-                    } else {
-                        container.innerHTML = checkins.map(checkin => `
-                            <div class="checkin-item">
-                                <strong>${checkin.encrypted_name}</strong> (#${checkin.student_number})${checkin.grade ? ` - Grade ${checkin.grade}` : ''}<br>
-                                Location: ${checkin.space_name}<br>
-                                Since: ${new Date(checkin.time_in).toLocaleTimeString()}
-                            </div>
-                        `).join('');
-                    }
-                } catch (error) {
-                    console.error('Failed to load current check-ins:', error);
-                    document.getElementById('currentCheckins').innerHTML = 
-                        '<div class="status error">Failed to load current check-ins</div>';
-                }
-            }
-            
-            async startScanner() {
-                try {
-                    const video = document.getElementById('video');
-                    const scanResult = document.getElementById('scanResult');
-                    
-                    video.classList.remove('hidden');
-                    scanResult.classList.remove('hidden');
-                    this.showStatus('scanResult', 'Starting camera...', 'info');
-                    
-                    await Quagga.init({
-                        inputStream: {
-                            name: "Live",
-                            type: "LiveStream",
-                            target: video,
-                            constraints: {
-                                width: 400,
-                                height: 300,
-                                facingMode: "environment"
-                            }
-                        },
-                        decoder: {
-                            readers: ["code_128_reader", "code_39_reader", "ean_reader", "ean_8_reader"]
-                        }
-                    });
-                    
-                    Quagga.start();
-                    this.isScanning = true;
-                    
-                    document.getElementById('startScanner').disabled = true;
-                    document.getElementById('stopScanner').disabled = false;
-                    
-                    this.showStatus('scanResult', 'Camera ready - point at barcode to scan', 'info');
-                    
-                    Quagga.onDetected((data) => {
-                        const code = data.codeResult.code;
-                        this.showStatus('scanResult', `Scanned: ${code}`, 'success');
-                        this.processScannedCode(code);
-                    });
-                    
-                } catch (error) {
-                    console.error('Scanner error:', error);
-                    this.showStatus('scanResult', 'Failed to start camera. Please check permissions.', 'error');
-                }
-            }
-            
-            stopScanner() {
-                if (this.isScanning) {
-                    Quagga.stop();
+                <div class="card current-checkins">
+                    <h2>Current Check-ins</h2>
+                    <div id="currentSpaceTitle" class="status info">Select a space to view check-ins</div>
+                    <div id="currentCheckins">
+                    </div>
+                    <button id="refreshBtn">Refresh Status</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Include QuaggaJS for barcode scanning -->
+        <script src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
+        
+        <script>
+            class StudentCheckinApp {
+                constructor() {
                     this.isScanning = false;
+                    this.isInitializingScanner = false;
+                    this.spaces = [];
+                    this.currentMode = 'manual';
+                    this.selectedSpaceId = null;
+                    this.init();
+                }
+                
+                async init() {
+                    this.setupEventListeners();
+                    await this.loadSpaces();
+                }
+                
+                setupEventListeners() {
+                    // Mode switching
+                    // Mode switching
+document.getElementById('modeToggle').addEventListener('click', () => this.toggleMode());
                     
-                    document.getElementById('video').classList.add('hidden');
-                    document.getElementById('scanResult').classList.add('hidden');
-                    document.getElementById('startScanner').disabled = false;
-                    document.getElementById('stopScanner').disabled = true;
-                }
-            }
-            
-            processScannedCode(code) {
-                // Auto-fill the student number field
-                document.getElementById('studentNumber').value = code;
-                this.showStatus('scanResult', `Student number ${code} detected - ready to check in`, 'success');
-                
-                // Check if space is already selected
-                const spaceSelect = document.getElementById('spaceSelect');
-                if (spaceSelect.value) {
-                    // Space already selected, ready to check in
-                    this.showStatus('manualResult', `Ready to check in student ${code}`, 'info');
-                } else {
-                    // No space selected, prompt user to select
-                    this.showStatus('manualResult', 'Select a space to complete check-in', 'info');
-                    spaceSelect.focus();
-                }
-            }
-            
-            async manualCheckin() {
-                const studentNumber = document.getElementById('studentNumber').value.trim();
-                const spaceId = document.getElementById('spaceSelect').value;
-                
-                if (!studentNumber || !spaceId) {
-                    this.showStatus('manualResult', 'Please enter student number and select a space', 'error');
-                    return;
-                }
-                
-                try {
-                    const response = await fetch(`/checkin-${studentNumber}-${spaceId}`);
-                    const data = await response.json();
+                    // Space selection
+                    document.getElementById('spaceSelect').addEventListener('change', () => this.onSpaceChanged());
                     
-                    if (data.status === 'success') {
-                        // Show different messages based on action type
-                        if (data.action === 'moved') {
-                            this.showStatus('manualResult', 
-                                `${data.message} (automatically checked out of previous location)`, 
-                                'success');
-                        } else {
-                            this.showStatus('manualResult', data.message, 'success');
+                    // Manual entry
+                    document.getElementById('checkinBtn').addEventListener('click', () => this.manualCheckin());
+                    document.getElementById('checkoutBtn').addEventListener('click', () => this.manualCheckout());
+                    
+                    // Scanner
+                    document.getElementById('startScanner').addEventListener('click', () => this.startScanner());
+                    document.getElementById('stopScanner').addEventListener('click', () => this.stopScanner());
+                    
+                    // Other
+                    document.getElementById('refreshBtn').addEventListener('click', () => this.loadCurrentCheckins());
+                    
+                    // Enter key support for student number input
+                    document.getElementById('studentNumber').addEventListener('keypress', (e) => {
+                        if (e.key === 'Enter') {
+                            this.manualCheckin();
                         }
-                        
-                        // Clear student number but keep space selected
-                        document.getElementById('studentNumber').value = '';
-                        
-                        // Focus back to student number for next entry
-                        document.getElementById('studentNumber').focus();
-                        
-                        await this.loadCurrentCheckins();
+                    });
+                }
+                
+                toggleMode() {
+                    if (this.currentMode === 'manual') {
+                        this.switchToScannerMode();
                     } else {
-                        this.showStatus('manualResult', data.message, 'error');
+                        this.switchToManualMode();
                     }
-                } catch (error) {
-                    this.showStatus('manualResult', 'Check-in failed. Please try again.', 'error');
                 }
-            }
-            
-            async manualCheckout() {
-                const studentNumber = document.getElementById('studentNumber').value.trim();
-                const spaceId = document.getElementById('spaceSelect').value;
-                
-                if (!studentNumber || !spaceId) {
-                    this.showStatus('manualResult', 'Please enter student number and select a space', 'error');
-                    return;
-                }
-                
-                try {
-                    const response = await fetch(`/checkout-${studentNumber}-${spaceId}`);
-                    const data = await response.json();
+
+                switchToManualMode() {
+                    this.currentMode = 'manual';
+                    this.stopScanner();
                     
-                    if (data.status === 'success') {
-                        this.showStatus('manualResult', data.message, 'success');
+                    document.getElementById('modeToggle').classList.remove('active');
+                    document.getElementById('manualLabel').classList.remove('inactive');
+                    document.getElementById('scannerLabel').classList.add('inactive');
+                    
+                    document.getElementById('manualEntrySection').classList.remove('hidden');
+                    document.getElementById('scannerSection').classList.add('hidden');
+                    
+                    document.getElementById('studentNumber').focus();
+                }
+
+                switchToScannerMode() {
+                    this.currentMode = 'scanner';
+                    
+                    document.getElementById('modeToggle').classList.add('active');
+                    document.getElementById('manualLabel').classList.add('inactive');
+                    document.getElementById('scannerLabel').classList.remove('inactive');
+                    
+                    document.getElementById('scannerSection').classList.remove('hidden');
+                    document.getElementById('manualEntrySection').classList.add('hidden');
+                }
+                
+                async loadSpaces() {
+                    try {
+                        const response = await fetch('/spaces');
+                        const data = await response.json();
+                        this.spaces = data.spaces || [];
                         
-                        // Clear student number but keep space selected
-                        document.getElementById('studentNumber').value = '';
+                        const select = document.getElementById('spaceSelect');
+                        select.innerHTML = '<option value="">Select a space...</option>';
                         
-                        // Focus back to student number for next entry
-                        document.getElementById('studentNumber').focus();
-                        
-                        await this.loadCurrentCheckins();
-                    } else {
-                        this.showStatus('manualResult', data.message, 'error');
+                        this.spaces.forEach(space => {
+                            const option = document.createElement('option');
+                            option.value = space.space_id;
+                            option.textContent = space.space_name;
+                            select.appendChild(option);
+                        });
+                    } catch (error) {
+                        console.error('Failed to load spaces:', error);
+                        this.showStatus('manualResult', 'Failed to load spaces', 'error');
                     }
-                } catch (error) {
-                    this.showStatus('manualResult', 'Check-out failed. Please try again.', 'error');
+                }
+                
+                onSpaceChanged() {
+                    const select = document.getElementById('spaceSelect');
+                    this.selectedSpaceId = select.value;
+                    
+                    if (this.selectedSpaceId) {
+                        const selectedSpace = this.spaces.find(s => s.space_id == this.selectedSpaceId);
+                        document.getElementById('currentSpaceTitle').textContent = 
+                            `Students in ${selectedSpace ? selectedSpace.space_name : 'Selected Space'}`;
+                        this.loadCurrentCheckins();
+                    } else {
+                        document.getElementById('currentSpaceTitle').textContent = 'Select a space to view check-ins';
+                        document.getElementById('currentCheckins').innerHTML = '';
+                    }
+                }
+                
+                async loadCurrentCheckins() {
+                    if (!this.selectedSpaceId) {
+                        return;
+                    }
+                    
+                    try {
+                        const response = await fetch(`/current-checkins?space_id=${this.selectedSpaceId}`);
+                        const data = await response.json();
+                        const checkins = data.current_checkins || [];
+                        
+                        const container = document.getElementById('currentCheckins');
+                        
+                        if (checkins.length === 0) {
+                            container.innerHTML = '<div class="status info">No students currently checked in to this space</div>';
+                        } else {
+                            container.innerHTML = checkins.map(checkin => `
+                                <div class="checkin-item">
+                                    <strong>${checkin.encrypted_name}</strong> (#${checkin.student_number})<br>
+                                    Since: ${new Date(checkin.time_in).toLocaleTimeString()}
+                                </div>
+                            `).join('');
+                        }
+                    } catch (error) {
+                        console.error('Failed to load current check-ins:', error);
+                        document.getElementById('currentCheckins').innerHTML = 
+                            '<div class="status error">Failed to load current check-ins</div>';
+                    }
+                }
+                
+                async startScanner() {
+                    if (!this.selectedSpaceId) {
+                        this.showStatus('scanResult', 'Please select a space first', 'error');
+                        return;
+                    }
+                    
+                    try {
+                        const video = document.getElementById('video');
+                        const scanResult = document.getElementById('scanResult');
+                        
+                        video.classList.remove('hidden');
+                        scanResult.classList.remove('hidden');
+                        this.showStatus('scanResult', 'Starting camera...', 'info');
+                        
+                        const stream = await navigator.mediaDevices.getUserMedia({
+                            video: { facingMode: 'environment' }
+                        });
+                        
+                        video.srcObject = stream;
+                        video.play();
+                        
+                        const codeReader = new ZXing.BrowserMultiFormatReader();
+                        
+                        codeReader.decodeFromVideoDevice(null, video, (result, err) => {
+                            if (result) {
+                                const code = result.getText();
+                                this.showStatus('scanResult', `Scanned: ${code}`, 'success');
+                                this.processScannedCode(code);
+                            }
+                        });
+                        
+                        this.isScanning = true;
+                        this.codeReader = codeReader;
+                        
+                        document.getElementById('startScanner').disabled = true;
+                        document.getElementById('stopScanner').disabled = false;
+                        
+                        this.showStatus('scanResult', 'Camera ready - point at barcode to scan', 'info');
+                        
+                    } catch (error) {
+                        console.error('Scanner error:', error);
+                        this.showStatus('scanResult', 'Failed to start camera. Please check permissions.', 'error');
+                    }
+                }
+                                
+                stopScanner() {
+                    if (this.isScanning && this.codeReader) {
+                        this.codeReader.reset();
+                        this.isScanning = false;
+                        
+                        document.getElementById('video').classList.add('hidden');
+                        document.getElementById('scanResult').classList.add('hidden');
+                        document.getElementById('startScanner').disabled = false;
+                        document.getElementById('stopScanner').disabled = true;
+                    }
+                }
+                
+                async processScannedCode(code) {
+                    if (!this.selectedSpaceId) {
+                        this.showStatus('scanResult', 'Please select a space first', 'error');
+                        return;
+                    }
+                    
+                    try {
+                        const response = await fetch(`/checkin-${code}-${this.selectedSpaceId}`);
+                        const data = await response.json();
+                        
+                        if (data.status === 'success') {
+                            this.showStatus('scanResult', `✅ ${data.message}`, 'success');
+                            await this.loadCurrentCheckins();
+                        } else {
+                            this.showStatus('scanResult', data.message, 'error');
+                        }
+                    } catch (error) {
+                        this.showStatus('scanResult', 'Check-in failed. Please try again.', 'error');
+                    }
+                }
+                
+                async manualCheckin() {
+                    const studentNumber = document.getElementById('studentNumber').value.trim();
+                    
+                    if (!studentNumber) {
+                        this.showStatus('manualResult', 'Please enter a student number', 'error');
+                        return;
+                    }
+                    
+                    if (!this.selectedSpaceId) {
+                        this.showStatus('manualResult', 'Please select a space first', 'error');
+                        return;
+                    }
+                    
+                    try {
+                        const response = await fetch(`/checkin-${studentNumber}-${this.selectedSpaceId}`);
+                        const data = await response.json();
+                        
+                        if (data.status === 'success') {
+                            this.showStatus('manualResult', `✅ ${data.message}`, 'success');
+                            document.getElementById('studentNumber').value = ''; // Auto-clear
+                            document.getElementById('studentNumber').focus();
+                            await this.loadCurrentCheckins();
+                        } else {
+                            this.showStatus('manualResult', data.message, 'error');
+                        }
+                    } catch (error) {
+                        this.showStatus('manualResult', 'Check-in failed. Please try again.', 'error');
+                    }
+                }
+                
+                async manualCheckout() {
+                    const studentNumber = document.getElementById('studentNumber').value.trim();
+                    
+                    if (!studentNumber) {
+                        this.showStatus('manualResult', 'Please enter a student number', 'error');
+                        return;
+                    }
+                    
+                    if (!this.selectedSpaceId) {
+                        this.showStatus('manualResult', 'Please select a space first', 'error');
+                        return;
+                    }
+                    
+                    try {
+                        const response = await fetch(`/checkout-${studentNumber}-${this.selectedSpaceId}`);
+                        const data = await response.json();
+                        
+                        if (data.status === 'success') {
+                            this.showStatus('manualResult', `✅ ${data.message}`, 'success');
+                            document.getElementById('studentNumber').value = ''; // Auto-clear
+                            document.getElementById('studentNumber').focus();
+                            await this.loadCurrentCheckins();
+                        } else {
+                            this.showStatus('manualResult', data.message, 'error');
+                        }
+                    } catch (error) {
+                        this.showStatus('manualResult', 'Check-out failed. Please try again.', 'error');
+                    }
+                }
+                
+                showStatus(elementId, message, type) {
+                    const element = document.getElementById(elementId);
+                    element.textContent = message;
+                    element.className = `status ${type}`;
+                    element.classList.remove('hidden');
                 }
             }
             
-            clearSpace() {
-                document.getElementById('spaceSelect').value = '';
-                this.showStatus('manualResult', 'Space cleared - select a new space', 'info');
-            }
-            
-            showStatus(elementId, message, type) {
-                const element = document.getElementById(elementId);
-                element.textContent = message;
-                element.className = `status ${type}`;
-                element.classList.remove('hidden');
-            }
-        }
-        
-        // Initialize the app when page loads
-        document.addEventListener('DOMContentLoaded', () => {
-            new StudentCheckinApp();
-        });
-    </script>
-</body>
-</html>"""
+            // Initialize the app when page loads
+            document.addEventListener('DOMContentLoaded', () => {
+                new StudentCheckinApp();
+            });
+        </script>
+    </body>
+    </html>"""
         
         return Response(
             html_content,
             headers={"Content-Type": "text/html"}
         )
-    
+
     async def serve_admin_dashboard(self):
-        """Serve the admin dashboard for monitoring and search"""
-        html_content = """<!DOCTYPE html>
+    """Serve the admin dashboard for monitoring and search"""
+    html_content = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -2167,22 +1985,6 @@ class Default(WorkerEntrypoint):
         </div>
         
         <div class="card">
-            <h2>Space Management</h2>
-            <div class="controls">
-                <button id="addSpaceBtn">Add New Space</button>
-                <button id="refreshSpacesBtn">Refresh Spaces</button>
-            </div>
-            
-            <div id="spaceManagement">
-                <div class="status info">Loading spaces...</div>
-            </div>
-            
-            <div id="spaceStatus" class="status info hidden">
-                Space actions will appear here
-            </div>
-        </div>
-        
-        <div class="card">
             <h2>Space Occupancy</h2>
             <div id="spaceOccupancy">
                 <div class="status info">Loading space data...</div>
@@ -2194,7 +1996,6 @@ class Default(WorkerEntrypoint):
         class AdminDashboard {
             constructor() {
                 this.refreshInterval = null;
-                this.currentEditingSpaceId = null;
                 this.init();
             }
             
@@ -2210,12 +2011,6 @@ class Default(WorkerEntrypoint):
                 document.getElementById('refreshBtn').addEventListener('click', () => this.loadAllData());
                 document.getElementById('exportBtn').addEventListener('click', () => this.exportData());
                 document.getElementById('bulkCheckoutBtn').addEventListener('click', () => this.bulkCheckout());
-                
-                // Space management
-                document.getElementById('addSpaceBtn').addEventListener('click', () => this.showAddSpaceModal());
-                document.getElementById('refreshSpacesBtn').addEventListener('click', () => this.loadSpaceManagement());
-                document.getElementById('cancelSpaceBtn').addEventListener('click', () => this.hideSpaceModal());
-                document.getElementById('saveSpaceBtn').addEventListener('click', () => this.saveSpace());
                 
                 // Enter key support for search
                 document.getElementById('searchBox').addEventListener('keypress', (e) => {
@@ -2236,20 +2031,12 @@ class Default(WorkerEntrypoint):
                         }
                     }, 300);
                 });
-                
-                // Modal click outside to close
-                document.getElementById('spaceModal').addEventListener('click', (e) => {
-                    if (e.target === document.getElementById('spaceModal')) {
-                        this.hideSpaceModal();
-                    }
-                });
             }
             
             async loadAllData() {
                 await Promise.all([
                     this.loadStats(),
-                    this.loadSpaceOccupancy(),
-                    this.loadSpaceManagement()
+                    this.loadSpaceOccupancy()
                 ]);
             }
             
@@ -2326,8 +2113,8 @@ class Default(WorkerEntrypoint):
                             ? spaceCheckins.map(checkin => `
                                 <div class="student-item">
                                     <div class="student-info">
-                                        <div class="student-name">${checkin.encrypted_name}</div>
-                                        <div class="student-details">#${checkin.student_number}${checkin.grade ? ` - Grade ${checkin.grade}` : ''}</div>
+                                        <div class="student-name">${checkin.display_name || checkin.encrypted_name}</div>
+                                        <div class="student-details">#${checkin.student_number}</div>
                                     </div>
                                     <div class="time-badge">
                                         ${new Date(checkin.time_in).toLocaleTimeString()}
@@ -2435,7 +2222,7 @@ class Default(WorkerEntrypoint):
                     const csvContent = [
                         headers.join(','),
                         ...checkins.map(checkin => [
-                            `"${checkin.encrypted_name}"`,
+                            `"${checkin.display_name || checkin.encrypted_name}"`,
                             checkin.student_number,
                             `"${checkin.space_name}"`,
                             `"${new Date(checkin.time_in).toLocaleString()}"`
@@ -2518,8 +2305,8 @@ class Default(WorkerEntrypoint):
     </script>
 </body>
 </html>"""
-        
-        return Response(
-            html_content,
-            headers={"Content-Type": "text/html"}
-        )
+    
+    return Response(
+        html_content,
+        headers={"Content-Type": "text/html"}
+    )
